@@ -82,6 +82,19 @@ other team's budget.
   that publish a rolling window drop past events as they age out, and cancelling
   those would erase costs the team really incurred.
 
+## PDF fonts
+
+`exports.ts` embeds DejaVu Sans from `/app/fonts`, installed in the Dockerfile.
+Do not go back to pdfkit's built-in Helvetica: it is WinAnsi-only, so any name
+outside Latin-1 rendered as mojibake in a statement emailed to a parent, and the
+request still returned 200 so nothing surfaced it. `hasUnicodeFonts` falls back
+to the built-in faces when the font is absent, which is what a contributor
+running `npm test` outside the container hits — that path must keep producing a
+valid PDF rather than throwing.
+
+`newDoc()` is the only place a `PDFDocument` is constructed. It exists so font
+registration happens exactly once per document.
+
 ## Partial updates
 
 Drizzle skips `undefined` keys in `.set()`, which is what makes a partial `PATCH`

@@ -36,8 +36,16 @@ LABEL org.opencontainers.image.title="teamledger" \
       org.opencontainers.image.source="https://github.com/raymondoooo/teamledger" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later"
 
-# su-exec drops privileges in the entrypoint. It is ~20KB, unlike sudo/gosu.
-RUN apk add --no-cache su-exec
+# su-exec drops privileges in the entrypoint (~20KB, unlike sudo/gosu).
+#
+# font-dejavu is for the PDF exports. pdfkit's built-in Helvetica is WinAnsi
+# only, so any name outside Latin-1 — Łukasz, Ольга, 李 — rendered as mojibake
+# in a document emailed to a parent, with no error to show for it. Only the two
+# faces actually used are kept; the full package is ~10MB.
+RUN apk add --no-cache su-exec font-dejavu \
+ && mkdir -p /app/fonts \
+ && cp /usr/share/fonts/dejavu/DejaVuSans.ttf /usr/share/fonts/dejavu/DejaVuSans-Bold.ttf /app/fonts/ \
+ && apk del font-dejavu
 
 # server/src/index.ts resolves web-dist, and drizzle's migrator resolves
 # ./migrations, relative to process.cwd() — so both sit beside dist/ at the

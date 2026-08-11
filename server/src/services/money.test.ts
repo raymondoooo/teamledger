@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { formatCents, parseMoneyToCents, quotedShareCents, splitEvenly } from './money.js';
 
 describe('splitEvenly', () => {
-  it('splits Ray’s Spring 2026 total without losing or inventing a cent', () => {
+  it('splits a season total without losing or inventing a cent', () => {
     // $4,075.00 across 15 players. The spreadsheet showed $271.67 for everyone,
     // which multiplies back to $4,075.05 — five cents the team never owed.
     const shares = splitEvenly(407500, 15);

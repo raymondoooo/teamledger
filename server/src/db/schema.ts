@@ -371,7 +371,7 @@ export const payments = pgTable('payments', {
   // A parent's Venmo lands in the treasurer's *personal* account first. This is
   // the date it actually reached the team's bank account — null means the
   // treasurer is still personally holding that money. The spreadsheet tracked
-  // the same thing in its "Ray Transferred" column.
+  // the same thing with a "transferred?" column.
   transferredOn: date('transferred_on'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });

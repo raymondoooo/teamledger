@@ -1,10 +1,43 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import PDFDocument from 'pdfkit';
 import type { PlayerBalance, SeasonBudget } from './budget.js';
 import { formatCents } from './money.js';
 
+// pdfkit's built-in Helvetica is WinAnsi-encoded: it can only represent
+// Latin-1. A roster is full of names that are not — Łukasz, Ольga, Nguyễn — and
+// those came out as mojibake in a statement emailed to a parent, with the PDF
+// still returning 200 so nothing flagged it.
+//
+// DejaVu Sans is embedded instead. It covers Latin (incl. Eastern European),
+// Cyrillic and Greek. CJK is not covered by any reasonably sized font, so those
+// glyphs render as blanks rather than as garbage — wrong, but visibly wrong.
+const FONT_DIR = process.env.FONT_DIR ?? path.resolve(process.cwd(), 'fonts');
+const UNICODE_FONTS = {
+  regular: path.join(FONT_DIR, 'DejaVuSans.ttf'),
+  bold: path.join(FONT_DIR, 'DejaVuSans-Bold.ttf'),
+};
+// Falls back to the built-in faces when the fonts are absent, so `npm run dev`
+// on a machine without them still produces a (Latin-1) PDF rather than failing.
+export const hasUnicodeFonts =
+  existsSync(UNICODE_FONTS.regular) && existsSync(UNICODE_FONTS.bold);
+
+const FONT = { regular: 'Helvetica', bold: 'Helvetica-Bold' };
+
+function newDoc(): PDFKit.PDFDocument {
+  const doc = new PDFDocument({ size: 'LETTER', margin: 50 });
+  if (hasUnicodeFonts) {
+    doc.registerFont('body', UNICODE_FONTS.regular);
+    doc.registerFont('body-bold', UNICODE_FONTS.bold);
+    FONT.regular = 'body';
+    FONT.bold = 'body-bold';
+  }
+  return doc;
+}
+
 // Exports exist so the books can leave the app: a CSV the next treasurer can
-// open in whatever they use, and a PDF that reads like the budget page Ray used
-// to send parents.
+// open in whatever they use, and a PDF that reads like the budget page a
+// treasurer would hand round at a parents' meeting.
 //
 // PDF generation is pdfkit rather than headless Chrome on purpose — this image
 // is meant to be pulled by strangers from GitHub, and Chromium would roughly
@@ -158,7 +191,11 @@ type PdfMeta = { teamName: string; seasonLabel: string };
 // (em dashes, curly quotes, the × we put in derived expense labels) silently
 // drops out of the rendered page. Everything written into a PDF goes through
 // here rather than relying on whoever typed the label to avoid them.
+// With a Unicode font embedded these characters render correctly, so nothing is
+// substituted. The mapping stays for the fallback path, where the built-in
+// WinAnsi faces would silently drop them.
 function pdfText(value: string): string {
+  if (hasUnicodeFonts) return value;
   return value
     .replace(/[—–]/g, '-')
     .replace(/[‘’]/g, "'")
@@ -185,7 +222,7 @@ function moneyRow(
 ) {
   const left = doc.page.margins.left + (opts.indent ?? 0);
   const right = doc.page.width - doc.page.margins.right;
-  doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10);
+  doc.font(opts.bold ? FONT.bold : FONT.regular).fontSize(10);
   const y = doc.y;
   doc.text(pdfText(label), left, y, { width: right - left - 90 });
   doc.text(pdfText(amount), right - 90, y, { width: 90, align: 'right' });
@@ -194,7 +231,7 @@ function moneyRow(
 
 function sectionHeader(doc: PDFKit.PDFDocument, title: string) {
   doc.moveDown(0.5);
-  doc.font('Helvetica-Bold').fontSize(11).fillColor('#000').text(pdfText(title));
+  doc.font(FONT.bold).fontSize(11).fillColor('#000').text(pdfText(title));
   const y = doc.y + 2;
   doc
     .moveTo(doc.page.margins.left, y)
@@ -205,10 +242,10 @@ function sectionHeader(doc: PDFKit.PDFDocument, title: string) {
 }
 
 export async function budgetPdf(budget: SeasonBudget, meta: PdfMeta): Promise<Buffer> {
-  const doc = new PDFDocument({ size: 'LETTER', margin: 50 });
+  const doc = newDoc();
 
-  doc.font('Helvetica-Bold').fontSize(16).text(pdfText(meta.teamName));
-  doc.font('Helvetica').fontSize(11).fillColor('#444').text(pdfText(`${meta.seasonLabel} — Team Budget`));
+  doc.font(FONT.bold).fontSize(16).text(pdfText(meta.teamName));
+  doc.font(FONT.regular).fontSize(11).fillColor('#444').text(pdfText(`${meta.seasonLabel} — Team Budget`));
   doc.fillColor('#000');
   doc.moveDown(0.5);
 
@@ -225,7 +262,7 @@ export async function budgetPdf(budget: SeasonBudget, meta: PdfMeta): Promise<Bu
 
   sectionHeader(doc, 'Credits');
   if (budget.creditsByKind.length === 0) {
-    doc.font('Helvetica').fontSize(10).fillColor('#666').text('None').fillColor('#000');
+    doc.font(FONT.regular).fontSize(10).fillColor('#666').text('None').fillColor('#000');
     doc.moveDown(0.3);
   }
   for (const kind of budget.creditsByKind) {
@@ -257,7 +294,7 @@ export async function budgetPdf(budget: SeasonBudget, meta: PdfMeta): Promise<Bu
 
   doc
     .moveDown(1)
-    .font('Helvetica')
+    .font(FONT.regular)
     .fontSize(8)
     .fillColor('#888')
     .text(`Generated ${new Date().toISOString().slice(0, 10)} by teamledger`);
@@ -270,13 +307,13 @@ export async function budgetPdf(budget: SeasonBudget, meta: PdfMeta): Promise<Bu
 // individual player — this is the sheet you hand round at a parents' meeting,
 // where per-player balances would be nobody else's business.
 export async function budgetSheetPdf(budget: SeasonBudget, meta: PdfMeta): Promise<Buffer> {
-  const doc = new PDFDocument({ size: 'LETTER', margin: 50 });
+  const doc = newDoc();
   const n = budget.rosterCount || 1;
   const perPlayer = (cents: number) => formatCents(Math.ceil(cents / n));
 
-  doc.font('Helvetica-Bold').fontSize(18).text(pdfText(meta.teamName), { align: 'center' });
+  doc.font(FONT.bold).fontSize(18).text(pdfText(meta.teamName), { align: 'center' });
   doc
-    .font('Helvetica')
+    .font(FONT.regular)
     .fontSize(12)
     .fillColor('#444')
     .text(pdfText(`${meta.seasonLabel} Budget`), { align: 'center' });
@@ -285,7 +322,7 @@ export async function budgetSheetPdf(budget: SeasonBudget, meta: PdfMeta): Promi
   // Column header for the two money columns, so the numbers below are readable
   // without a legend.
   const right = doc.page.width - doc.page.margins.right;
-  doc.font('Helvetica-Bold').fontSize(9).fillColor('#666');
+  doc.font(FONT.bold).fontSize(9).fillColor('#666');
   const headY = doc.y;
   // Short labels: "TOTAL DUE FROM TEAM" wraps to two lines in a 100pt column.
   doc.text('TEAM TOTAL', right - 200, headY, { width: 100, align: 'right' });
@@ -298,7 +335,7 @@ export async function budgetSheetPdf(budget: SeasonBudget, meta: PdfMeta): Promi
     opts: { bold?: boolean; indent?: number; showPerPlayer?: boolean } = {},
   ) => {
     const left = doc.page.margins.left + (opts.indent ?? 0);
-    doc.font(opts.bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(10);
+    doc.font(opts.bold ? FONT.bold : FONT.regular).fontSize(10);
     const y = doc.y;
     doc.text(pdfText(label), left, y, { width: right - left - 205 });
     doc.text(formatCents(total), right - 200, y, { width: 100, align: 'right' });
@@ -322,7 +359,7 @@ export async function budgetSheetPdf(budget: SeasonBudget, meta: PdfMeta): Promi
 
   sectionHeader(doc, 'Credits, fundraising and sponsors');
   if (budget.creditsByKind.length === 0) {
-    doc.font('Helvetica').fontSize(10).fillColor('#666').text('None').fillColor('#000');
+    doc.font(FONT.regular).fontSize(10).fillColor('#666').text('None').fillColor('#000');
     doc.moveDown(0.3);
   }
   for (const kind of budget.creditsByKind) {
@@ -338,7 +375,7 @@ export async function budgetSheetPdf(budget: SeasonBudget, meta: PdfMeta): Promi
   twoColumnRow('Team credits', budget.totalCreditsCents, { showPerPlayer: false });
   twoColumnRow('Total expenses minus credits', budget.netDueCents, { bold: true });
   doc.moveDown(0.2);
-  doc.font('Helvetica').fontSize(10).text(pdfText(`Players rostered: ${budget.rosterCount}`));
+  doc.font(FONT.regular).fontSize(10).text(pdfText(`Players rostered: ${budget.rosterCount}`));
   doc.moveDown(0.4);
 
   moneyRow(doc, 'Total due per player', formatCents(budget.quotedPerPlayerCents), { bold: true });
@@ -360,7 +397,7 @@ export async function budgetSheetPdf(budget: SeasonBudget, meta: PdfMeta): Promi
 
   doc
     .moveDown(1.2)
-    .font('Helvetica')
+    .font(FONT.regular)
     .fontSize(8)
     .fillColor('#888')
     .text(
@@ -378,11 +415,11 @@ export async function playerStatementPdf(
   budget: SeasonBudget,
   meta: PdfMeta,
 ): Promise<Buffer> {
-  const doc = new PDFDocument({ size: 'LETTER', margin: 50 });
+  const doc = newDoc();
 
-  doc.font('Helvetica-Bold').fontSize(16).text(pdfText(meta.teamName));
+  doc.font(FONT.bold).fontSize(16).text(pdfText(meta.teamName));
   doc
-    .font('Helvetica')
+    .font(FONT.regular)
     .fontSize(11)
     .fillColor('#444')
     .text(pdfText(`${meta.seasonLabel} — Statement for ${player.name}`));
@@ -406,7 +443,7 @@ export async function playerStatementPdf(
 
   sectionHeader(doc, 'Payments received');
   if (player.payments.length === 0) {
-    doc.font('Helvetica').fontSize(10).fillColor('#666').text('None yet').fillColor('#000');
+    doc.font(FONT.regular).fontSize(10).fillColor('#666').text('None yet').fillColor('#000');
     doc.moveDown(0.3);
   }
   for (const payment of player.payments) {
@@ -428,7 +465,7 @@ export async function playerStatementPdf(
 
   if (owing && player.finalPaymentDueCents > 0) {
     doc.moveDown(0.5);
-    doc.font('Helvetica').fontSize(9).fillColor('#444');
+    doc.font(FONT.regular).fontSize(9).fillColor('#444');
     doc.text(
       pdfText(
         `Payment plan: ${formatCents(player.firstPaymentDueCents)} first payment, ` +
@@ -439,12 +476,12 @@ export async function playerStatementPdf(
   }
 
   if (player.venmoHandle) {
-    doc.moveDown(0.5).font('Helvetica').fontSize(10).text(pdfText(`Venmo: ${player.venmoHandle}`));
+    doc.moveDown(0.5).font(FONT.regular).fontSize(10).text(pdfText(`Venmo: ${player.venmoHandle}`));
   }
 
   doc
     .moveDown(1)
-    .font('Helvetica')
+    .font(FONT.regular)
     .fontSize(8)
     .fillColor('#888')
     .text(

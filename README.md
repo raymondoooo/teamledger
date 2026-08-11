@@ -178,6 +178,10 @@ practice. Correcting a type pins it, so later syncs will not change it back.
   practice becomes one row per occurrence, bounded by the season's start and end
   dates (or the season year if you have not set them), and capped at 400
   occurrences per series. A rule extending beyond that window is clipped.
+- **PDF exports cover Latin, Cyrillic and Greek, but not CJK.** DejaVu Sans is
+  embedded so accented and Eastern European names render properly; Chinese,
+  Japanese and Korean glyphs come out blank, because covering them needs a
+  ~16MB font. CSV exports are UTF-8 and handle every script.
 - **No parent-facing view.** Parents don't log in; you send them a PDF statement.
 - **One admin account.** No co-treasurer, no password reset.
 - **`SESSION_SECRET` must be set**; the app will not start without it. Most
