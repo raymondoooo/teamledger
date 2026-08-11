@@ -1,0 +1,351 @@
+name: build, test, publish
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+# packages:write is what lets the publish job push to GHCR using the built-in
+# GITHUB_TOKEN — no extra secret needed for that registry.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # The unit suite covers the parts where a silent wrong answer is worst: the
+  # money split and the calendar classifier.
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Types must compile
+        run: npm run build
+
+  # Builds the image and exercises it the way a new self-hoster would: empty
+  # database, no pre-seeded state, no host files. This is the check that catches
+  # "works on my machine" regressions before they reach anyone.
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t teamledger:ci .
+
+      - name: Start Postgres and the app on empty volumes
+        run: |
+          docker network create tl-ci
+          docker run -d --name tl-db --network tl-ci \
+            -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec tl-db pg_isready -U ci -d ci >/dev/null 2>&1 && break
+            sleep 1
+          done
+          docker run -d --name tl-app --network tl-ci -p 3000:3000 \
+            -e PGHOST=tl-db -e PGUSER=ci -e PGPASSWORD=ci -e PGDATABASE=ci \
+            -e SESSION_SECRET=ci-secret -e NODE_ENV=development \
+            -e APP_URL=http://localhost:3000 -e ICAL_SYNC_INTERVAL_MINUTES=0 \
+            teamledger:ci
+          for i in $(seq 1 40); do
+            if curl -fsS -o /dev/null http://localhost:3000/api/health; then
+              echo "up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "container did not come up"; docker logs tl-app; exit 1
+
+      - name: A fresh install must present the setup screen
+        run: |
+          set -e
+          curl -fsS http://localhost:3000/api/setup/status | grep -q '"configured":false'
+          echo "fresh install reports unconfigured"
+
+      - name: First-run flow, and setup must be claimable only once
+        run: |
+          set -e
+          B=http://localhost:3000/api
+          curl -fsS -c /tmp/j -X POST "$B/setup" -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","password":"ci-password-123"}' | grep -q '"ok":true'
+
+          # A second setup call must be refused, or anyone could claim an
+          # already-configured instance.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/setup" \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"attacker@example.com","password":"another-password"}')
+          [ "$code" = "400" ] || { echo "FAIL: setup was claimable twice (got $code)"; exit 1; }
+
+          # Wrong password must be rejected, and logout must invalidate.
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/auth/login" \
+            -H 'Content-Type: application/json' -d '{"email":"ci@example.com","password":"nope"}')
+          [ "$code" = "401" ] || { echo "FAIL: bad password accepted (got $code)"; exit 1; }
+
+          curl -fsS -b /tmp/j -c /tmp/j -X POST "$B/auth/logout" >/dev/null
+          code=$(curl -s -o /dev/null -w '%{http_code}' -b /tmp/j "$B/teams")
+          [ "$code" = "401" ] || { echo "FAIL: session survived logout (got $code)"; exit 1; }
+          echo "first-run flow OK"
+
+      - name: Unauthenticated requests must not reach data
+        run: |
+          set -e
+          for path in teams seasons; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3000/api/$path")
+            [ "$code" = "401" ] || { echo "FAIL: /api/$path returned $code without a session"; exit 1; }
+          done
+          echo "API is closed without a session"
+
+      - name: The money math must survive a real round trip
+        run: |
+          set -e
+          B=http://localhost:3000/api
+          curl -fsS -c /tmp/j -X POST "$B/auth/login" -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","password":"ci-password-123"}' >/dev/null
+          post() { curl -fsS -b /tmp/j -X POST "$B$1" -H 'Content-Type: application/json' -d "$2"; }
+          T=$(post /teams '{"name":"CI FC"}' | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+          S=$(post /seasons "{\"teamId\":$T,\"term\":\"spring\",\"year\":2026,\"firstPaymentCents\":15000}" \
+            | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+          for i in $(seq 1 15); do post /seasons/$S/roster "{\"name\":\"P$i\"}" >/dev/null; done
+          post /seasons/$S/expenses '{"category":"misc","label":"Season costs","amountCents":407500}' >/dev/null
+
+          # 15 players, $4,075.00. Exact shares must sum to the total even though
+          # it does not divide evenly — the quoted figure rounds up to $271.67.
+          curl -fsS -b /tmp/j "$B/seasons/$S/budget" > /tmp/budget.json
+          python3 - <<'PY'
+          import json
+          b = json.load(open('/tmp/budget.json'))
+          assert b['totalExpensesCents'] == 407500, b['totalExpensesCents']
+          assert b['quotedPerPlayerCents'] == 27167, b['quotedPerPlayerCents']
+          shares = sum(p['shareCents'] for p in b['playerBalances'])
+          assert shares == b['netDueCents'], f"shares {shares} != net {b['netDueCents']}"
+          p = b['playerBalances'][0]
+          assert p['firstPaymentDueCents'] == 15000
+          assert p['finalPaymentDueCents'] == p['duesCents'] - 15000
+          print("budget math OK:", b['quotedPerPlayerCents'], "per player, shares sum exactly")
+          PY
+
+      - name: Exports must generate
+        run: |
+          set -e
+          B=http://localhost:3000/api
+          S=1
+          for kind in roster ledger budget balances; do
+            curl -fsS -b /tmp/j "$B/seasons/$S/export/$kind.csv" -o /tmp/$kind.csv
+            # Excel needs the UTF-8 BOM or it mangles accented names. Compared as
+            # hex because grep on raw bytes is locale-dependent and gives a false
+            # failure on a file that is actually correct.
+            bom=$(head -c 3 /tmp/$kind.csv | od -An -tx1 | tr -d ' \n')
+            [ "$bom" = "efbbbf" ] || { echo "FAIL: $kind.csv missing BOM (got $bom)"; exit 1; }
+          done
+          for doc in budget budget-sheet; do
+            curl -fsS -b /tmp/j "$B/seasons/$S/export/$doc.pdf" -o /tmp/$doc.pdf
+            head -c 4 /tmp/$doc.pdf | grep -q '%PDF' || { echo "FAIL: $doc.pdf is not a PDF"; exit 1; }
+          done
+          echo "exports OK"
+
+      - name: Home-screen assets must be served
+        run: |
+          set -e
+          for a in apple-touch-icon.png manifest.webmanifest favicon.svg; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3000/$a")
+            [ "$code" = "200" ] || { echo "FAIL: /$a returned $code"; exit 1; }
+          done
+          echo "PWA assets OK"
+
+      - name: Must refuse to start without a session secret
+        run: |
+          set -e
+          # A missing secret has to fail loudly at boot. If this ever starts
+          # succeeding, the container will run happily and only fall over when
+          # someone tries to log in.
+          if docker run --rm --network tl-ci \
+            -e PGHOST=tl-db -e PGUSER=ci -e PGPASSWORD=ci -e PGDATABASE=ci \
+            -e NODE_ENV=development -e APP_URL=http://localhost:3000 \
+            --name tl-nosecret teamledger:ci; then
+            echo "FAIL: started with no SESSION_SECRET"; exit 1
+          fi
+          echo "correctly refused to start without SESSION_SECRET"
+
+      - name: Login rate limit must not be bypassable via X-Forwarded-For
+        run: |
+          set -e
+          B=http://localhost:3000/api
+          # TRUST_PROXY is unset here, so forged X-Forwarded-For values must NOT
+          # create separate rate-limit buckets. Regression test for the class of
+          # bug where trusting that header unconditionally gives unlimited
+          # password guesses.
+          seen429=0
+          for i in $(seq 1 16); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/auth/login" \
+              -H "X-Forwarded-For: 10.9.$i.$i" \
+              -H 'Content-Type: application/json' \
+              -d '{"email":"ci@example.com","password":"wrong"}')
+            [ "$code" = "429" ] && seen429=1
+          done
+          [ "$seen429" = "1" ] || { echo "FAIL: rate limit bypassed by spoofed X-Forwarded-For"; exit 1; }
+          echo "rate limit holds against spoofing"
+
+      - name: The app must survive its database restarting
+        run: |
+          set -e
+          # An unhandled pg pool 'error' event is a hard crash in Node, so a
+          # database bounce used to take the whole app down. Health must report
+          # 503 while it is gone and recover afterwards, without the process
+          # exiting.
+          docker stop tl-db >/dev/null; sleep 3
+          [ "$(docker inspect -f '{{.State.Status}}' tl-app)" = "running" ] \
+            || { echo "FAIL: app died when the database stopped"; docker logs tl-app; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/health)
+          [ "$code" = "503" ] || { echo "FAIL: expected 503 with the db down, got $code"; exit 1; }
+          docker start tl-db >/dev/null; sleep 6
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/health)
+          [ "$code" = "200" ] || { echo "FAIL: did not recover after the db returned, got $code"; exit 1; }
+          echo "survives a database restart and reports health honestly"
+
+      - name: A newer database must refuse to boot on an older binary
+        run: |
+          set -e
+          # Simulate a rollback: stamp the schema version past what this build
+          # understands, then confirm the container refuses to start rather than
+          # writing into a schema it does not know.
+          docker exec tl-db psql -U ci -d ci -c "update app_schema_version set version = 9999 where id = 1;"
+          if docker run --rm --network tl-ci \
+            -e PGHOST=tl-db -e PGUSER=ci -e PGPASSWORD=ci -e PGDATABASE=ci \
+            -e SESSION_SECRET=ci-secret -e APP_URL=http://localhost:3000 \
+            --name tl-downgrade teamledger:ci > /tmp/downgrade.log 2>&1; then
+            echo "FAIL: started against a newer database"; cat /tmp/downgrade.log; exit 1
+          fi
+          grep -q "REFUSING TO START" /tmp/downgrade.log \
+            || { echo "FAIL: no downgrade warning"; cat /tmp/downgrade.log; exit 1; }
+          docker exec tl-db psql -U ci -d ci -c "update app_schema_version set version = 5 where id = 1;"
+          echo "downgrade guard works"
+
+      - name: Bind-mounted upload directory must be writable
+        run: |
+          set -e
+          # RUN chown in the Dockerfile is masked by a host bind mount — Docker
+          # creates the missing host directory as root. The entrypoint has to fix
+          # ownership at runtime or uploads fail for every user with a bind mount.
+          mkdir -p /tmp/bindtest
+          docker run --rm --network tl-ci -v /tmp/bindtest/receipts:/app/data/receipts \
+            -e PGHOST=tl-db -e PGUSER=ci -e PGPASSWORD=ci -e PGDATABASE=ci \
+            -e SESSION_SECRET=ci-secret \
+            --entrypoint /usr/local/bin/docker-entrypoint.sh teamledger:ci \
+            sh -c 'touch /app/data/receipts/probe' \
+            || { echo "FAIL: app cannot write to a bind-mounted data directory"; exit 1; }
+          echo "bind-mounted volume is writable"
+
+      - name: App must run as a non-root user
+        run: |
+          # /proc/1 rather than `id`: the entrypoint starts as root to chown the
+          # volume and drops privileges with su-exec, so `docker exec id` reports
+          # the image default and would pass even if the drop had regressed.
+          u=$(docker exec tl-app sh -c 'stat -c %U /proc/1')
+          [ "$u" != "root" ] || { echo "FAIL: app process runs as root"; exit 1; }
+          echo "app process runs as: $u"
+
+      - name: Runtime image must not ship a build toolchain
+        run: |
+          for b in gcc g++ make python3; do
+            if docker exec tl-app sh -c "command -v $b" >/dev/null 2>&1; then
+              echo "FAIL: $b present in the runtime image"; exit 1
+            fi
+          done
+          echo "runtime image is clean"
+          docker image inspect teamledger:ci --format 'image size: {{.Size}} bytes'
+
+      - name: Docker healthcheck must report healthy
+        run: |
+          for i in $(seq 1 60); do
+            s=$(docker inspect -f '{{.State.Health.Status}}' tl-app 2>/dev/null || echo none)
+            [ "$s" = "healthy" ] && { echo "healthy after ${i}s"; exit 0; }
+            [ "$s" = "unhealthy" ] && { echo "FAIL: unhealthy"; docker logs tl-app; exit 1; }
+            sleep 1
+          done
+          echo "FAIL: never became healthy (last status: $s)"; docker logs tl-app; exit 1
+
+      - name: Data must survive a container recreate, and migrations must re-run clean
+        run: |
+          set -e
+          docker rm -f tl-app >/dev/null
+          docker run -d --name tl-app2 --network tl-ci -p 3000:3000 \
+            -e PGHOST=tl-db -e PGUSER=ci -e PGPASSWORD=ci -e PGDATABASE=ci \
+            -e SESSION_SECRET=ci-secret -e NODE_ENV=development \
+            -e APP_URL=http://localhost:3000 -e ICAL_SYNC_INTERVAL_MINUTES=0 \
+            teamledger:ci
+          for i in $(seq 1 40); do curl -fsS -o /dev/null http://localhost:3000/api/health && break; sleep 1; done
+
+          # Already set up, so the app must NOT offer the setup screen again.
+          curl -fsS http://localhost:3000/api/setup/status | grep -q '"configured":true' \
+            || { echo "FAIL: data did not persist"; exit 1; }
+          curl -fsS -c /tmp/j2 -X POST http://localhost:3000/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","password":"ci-password-123"}' | grep -q '"ok":true'
+          curl -fsS -b /tmp/j2 http://localhost:3000/api/teams | grep -q 'CI FC'
+          echo "persistence OK"
+
+      - name: Container logs (always)
+        if: always()
+        run: docker logs tl-app2 2>&1 || docker logs tl-app 2>&1 || true
+
+  # Only fires on a v* tag, and only after both test jobs pass. arm64 matters
+  # because plenty of self-hosters run this on a Pi or a NAS.
+  publish:
+    needs: [unit, container]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # GHCR as well as Docker Hub: Docker Hub rate-limits anonymous pulls, which
+      # is a real problem for self-hosters who redeploy often. Same image, two
+      # places, no extra credentials.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # v1.2.3 produces :1.2.3, :1.2, :1 and :latest, so users can pin as tightly
+      # or as loosely as they like. Also emits the OCI labels linking the image
+      # back to this repo.
+      - name: Derive tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/teamledger
+            ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

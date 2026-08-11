@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- A ledger page with a coin: the two halves of what this app is. Flat
+       shapes and no thin strokes, so it stays legible at 16px in a tab. -->
+  <rect width="64" height="64" rx="14" fill="#1c6b4a"/>
+  <rect x="14" y="11" width="30" height="42" rx="4" fill="#ffffff"/>
+  <rect x="20" y="19" width="18" height="4" rx="2" fill="#1c6b4a"/>
+  <rect x="20" y="28" width="18" height="4" rx="2" fill="#9cc9b4"/>
+  <rect x="20" y="37" width="11" height="4" rx="2" fill="#9cc9b4"/>
+  <circle cx="45" cy="43" r="13" fill="#f2b134" stroke="#1c6b4a" stroke-width="3"/>
+  <text x="45" y="49.5" font-family="Helvetica,Arial,sans-serif" font-size="17"
+        font-weight="bold" fill="#1c6b4a" text-anchor="middle">$</text>
+</svg>

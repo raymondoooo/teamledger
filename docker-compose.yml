@@ -1,0 +1,46 @@
+name: teamledger
+
+# teamledger — copy .env.example to .env, then `docker compose up -d --build`.
+#
+# One compose file, whatever you run it on. Everything environment-specific
+# lives in ./.env, which is gitignored, so the same file works unchanged on a
+# laptop, a NAS or a server.
+#
+# Listens on plain http at 3112. If you put a reverse proxy in front to
+# terminate TLS, set APP_URL to the https:// address you actually browse to —
+# that is what switches session cookies to Secure.
+#
+# Prefer a prebuilt image to building from source? Replace `build: .` under the
+# app service with:
+#   image: ghcr.io/raymondoooo/teamledger:latest
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./db/data:/var/lib/postgresql/data
+    healthcheck:
+      # $$ defers expansion to the container's shell, so these resolve from
+      # env_file above instead of being interpolated by compose.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3112:3000"
+    volumes:
+      # Receipt uploads attached to payments. Bind-mounted so they survive a
+      # rebuild and land in the same backup sweep as db/data.
+      - ./data/receipts:/app/data/receipts
+    # No source bind-mount: the frontend is a compiled Vite bundle, so changes
+    # need `docker compose up -d --build` rather than just a browser refresh.
+    depends_on:
+      db:
+        condition: service_healthy

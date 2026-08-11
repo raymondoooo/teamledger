@@ -1,0 +1,366 @@
+/* One stylesheet, no framework. The app is a handful of dense tables for one
+   person doing bookkeeping — a component library would be more bytes than the
+   whole frontend. Follows the OS light/dark preference. */
+
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --border: #dfe3e8;
+  --text: #14181d;
+  --muted: #667085;
+  --accent: #1c6b4a;
+  --accent-soft: #e6f2ec;
+  --danger: #b4232a;
+  --warn: #8a5a00;
+  --radius: 8px;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --panel: #1b1f26;
+    --border: #2c323b;
+    --text: #e8eaed;
+    --muted: #98a2b3;
+    --accent: #4ba97c;
+    --accent-soft: #1d3229;
+    --danger: #f0797f;
+    --warn: #e0a83c;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  /* Stops iOS inflating font sizes in landscape. */
+  -webkit-text-size-adjust: 100%;
+}
+
+a { color: var(--accent); }
+
+.layout { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 210px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 17px;
+  padding: 0 20px 16px;
+  letter-spacing: -0.01em;
+}
+
+.nav a {
+  display: block;
+  padding: 8px 20px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 14px;
+}
+.nav a:hover { background: var(--accent-soft); }
+.nav a.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.main { flex: 1; padding: 24px 32px; max-width: 1100px; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 16px; margin: 24px 0 10px; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+
+.stat {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  min-width: 150px;
+  flex: 1;
+}
+.stat .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+.stat .value { font-size: 22px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+/* Wide tables scroll inside their panel rather than the page. */
+.table-wrap { overflow-x: auto; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--accent); }
+.sort-arrow { display: inline-block; width: 12px; font-size: 9px; color: var(--accent); }
+tbody tr:hover { background: var(--accent-soft); }
+tr.subtotal td { font-weight: 650; border-top: 2px solid var(--border); }
+
+.owes { color: var(--danger); font-weight: 600; }
+.overpaid { color: var(--warn); }
+.settled { color: var(--accent); }
+.muted { color: var(--muted); }
+.derived { color: var(--muted); font-size: 12px; font-style: italic; }
+
+button, .btn {
+  font: inherit;
+  padding: 7px 13px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+button.danger { color: var(--danger); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.link { border: none; background: none; color: var(--accent); padding: 2px 4px; }
+
+input, select {
+  font: inherit;
+  padding: 7px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.form-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 12px; color: var(--muted); }
+
+.error {
+  background: #fdecea;
+  color: #8a1c22;
+  border: 1px solid #f5c2c0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  .error { background: #3a1c1e; color: #f5b5b8; border-color: #5c2a2e; }
+}
+
+.notice { color: var(--muted); font-size: 13px; }
+
+.centered {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.card { width: 100%; max-width: 380px; }
+.card .field { margin-bottom: 12px; }
+.card input { width: 100%; }
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+}
+.badge.grey { background: var(--border); color: var(--muted); }
+.badge.strike { text-decoration: line-through; }
+
+/* ---------------------------------------------------------------------------
+   Mobile.
+
+   This app is dense bookkeeping tables, and on a phone the treasurer is doing a
+   narrow set of things: checking who owes, ticking off a payment, glancing at
+   the balance. So rather than shrinking everything, secondary columns are
+   dropped below 640px (marked `hide-sm` in the markup) and the full picture
+   stays available on a laptop.
+
+   `.num` columns keep tabular figures at every size — misaligned money columns
+   are harder to read than small ones.
+--------------------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .layout { flex-direction: column; }
+
+  .main {
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    padding-bottom: calc(40px + env(safe-area-inset-bottom));
+  }
+
+  /* The sidebar becomes a sticky strip across the top. Horizontal scroll for
+     the nav is deliberate: a wrapped two-row menu costs more vertical space
+     than the content it is there to reach.
+     
+     The safe-area inset is part of this shorthand rather than a separate
+     padding-top rule: a later `padding:` shorthand silently resets it, which is
+     exactly how the nav ended up painting under the iPhone status bar. */
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: calc(8px + env(safe-area-inset-top)) 0 0;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+  }
+
+  .brand { padding: 0 10px; font-size: 15px; flex-shrink: 0; }
+
+  /* The nav takes the leftover width and scrolls inside it. Without min-width:0
+     a flex item refuses to shrink below its content, so the nav pushed the sign
+     out button off the edge instead of scrolling. */
+  .nav {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    gap: 2px;
+    padding-bottom: 8px;
+    /* Hide the scrollbar but keep the scrolling. */
+    scrollbar-width: none;
+  }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav a {
+    padding: 6px 12px;
+    white-space: nowrap;
+    border-radius: 999px;
+    font-size: 13px;
+  }
+  .nav a.active { box-shadow: none; }
+
+  /* Sign out: never squeezed, never wrapped. */
+  .sidebar > div:last-child {
+    margin-top: 0 !important;
+    padding: 0 10px 8px !important;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .main { padding: 14px 12px 40px; max-width: none; }
+
+  h1 { font-size: 18px; }
+  h2 { font-size: 15px; margin: 18px 0 8px; }
+  .panel { padding: 12px; }
+
+  /* Five stacked full-width stat cards was the single worst offender for
+     scrolling on the Bank and Dashboard pages. */
+  .stat-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .stat { min-width: 0; padding: 10px 12px; }
+  .stat .label { font-size: 11px; }
+  .stat .value { font-size: 18px; }
+
+  /* Inline minWidths on form fields force one control per row on a phone.
+     Overriding them here rather than editing every call site keeps the desktop
+     layout untouched. */
+  .form-row { gap: 8px 6px; }
+  .form-row .field { min-width: 0 !important; flex: 1 1 calc(50% - 6px) !important; }
+  .form-row .field input,
+  .form-row .field select { width: 100% !important; }
+  .form-row > button { flex: 1 1 100%; }
+
+  th, td { padding: 7px 6px; }
+  table { font-size: 13px; }
+}
+
+/* A page section that can be folded away. Native <details> so it works without
+   JavaScript and keyboard/screen-reader support comes for free. Used on the
+   Bank page, where showing the ledger, the trainer payables and the account
+   settings all at once buried the thing you actually came to do. */
+.section { margin: 22px 0 16px; }
+.section > summary {
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  padding: 6px 0;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.section > summary::-webkit-details-marker { display: none; }
+/* A rotating caret, drawn rather than an icon font. */
+.section > summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 5px solid var(--muted);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.section[open] > summary::before { transform: rotate(90deg); }
+.section > summary:hover { color: var(--accent); }
+.section > summary > span { font-weight: 400; font-size: 14px; }
+.section > .panel { margin-top: 10px; }
+
+/* Section title with its primary action on the same line, so the action is
+   visible before any of the rows below it. */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 24px 0 10px;
+}
+
+/* Shown only once the columns it substitutes for have been hidden. */
+.show-sm-only { display: none; }
+
+@media (max-width: 640px) {
+  .show-sm-only { display: inline; }
+
+  /* Secondary columns. Everything hidden here is still on the CSV and PDF
+     exports, and on the same screen at desktop width. */
+  .hide-sm { display: none !important; }
+
+  .stat-row { grid-template-columns: 1fr 1fr; }
+  .card { max-width: none; }
+
+  /* Tap targets: a 13px checkbox in a table row is unusable with a thumb. */
+  input[type='checkbox'] { width: 20px; height: 20px; }
+  button, .btn { padding: 8px 12px; }
+  button.link { padding: 6px 4px; }
+
+  /* iOS zooms the page when a focused input is under 16px. */
+  input, select { font-size: 16px; }
+}

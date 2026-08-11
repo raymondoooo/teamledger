@@ -1,0 +1,25 @@
+# The Postgres bind mount lives at db/data and is owned by the postgres user, so
+# without this the build fails outright with a permission error the moment the
+# stack has been started once.
+db/data
+data/receipts
+
+# Never let secrets into an image that might get pushed somewhere.
+.env
+.env.*
+secrets/
+
+# Rebuilt inside the image; copying them in would shadow the build output and
+# risks baking in a host-arch node_modules.
+node_modules
+*/node_modules
+server/dist
+web/dist
+*.tsbuildinfo
+
+.git
+.gitignore
+*.log
+backups/
+README.md
+LICENSE

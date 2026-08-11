@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover plus the safe-area padding in styles.css keeps the
+         sticky nav clear of the notch when this runs as a home-screen app. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Safari ignores SVG favicons in some versions; the emoji fallback keeps
+         the tab from showing a blank page icon there. -->
+    <link rel="alternate icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='52' font-size='52'%3E%F0%9F%A7%BE%3C/text%3E%3C/svg%3E" />
+
+    <!-- iOS only accepts PNG here — it silently ignores an SVG and falls back to
+         a screenshot of the page, which is why "Add to Home Screen" looked
+         blank before. 180x180 is what current iPhones ask for. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- Launches from the home screen without Safari's address and toolbar,
+         which is a third of the screen back on a phone. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="teamledger" />
+    <!-- NOT black-translucent. That paints the page under the status bar and
+         forces white status-bar text, which is invisible against this app's
+         white panel in light mode. "default" makes iOS reserve the status bar
+         area itself, so the clock always contrasts and the nav starts below it.
+         The safe-area padding in styles.css stays as a fallback for notched
+         landscape and any browser that does let content run underneath. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#1c6b4a" />
+
+    <title>teamledger</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

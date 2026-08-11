@@ -1,0 +1,25 @@
+.env
+.env.*
+!.env.example
+secrets/
+node_modules/
+dist/
+dist-electron/
+dist-renderer/
+win-unpacked/
+*.log
+backups/
+backups-encrypted/
+db/data/
+volumes/db/data/
+
+# Payment receipt uploads — real financial records, never committed.
+data/receipts/
+
+# TypeScript incremental build cache.
+*.tsbuildinfo
+
+# Editor swap files.
+*.swp
+*.swo
+*~

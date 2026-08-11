@@ -1,0 +1,34 @@
+{
+  "name": "teamledger",
+  "version": "0.7.0",
+  "private": true,
+  "description": "Self-hosted treasury and budget tracker for youth sports teams",
+  "license": "AGPL-3.0-or-later",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev --workspace server",
+    "dev:web": "npm run dev --workspace web",
+    "build:web": "npm run build --workspace web",
+    "build:server": "npm run build --workspace server",
+    "build": "npm run build:web && npm run build:server",
+    "db:generate": "npm run db:generate --workspace server",
+    "db:migrate": "npm run db:migrate --workspace server",
+    "start": "npm run start --workspace server",
+    "test": "npm run test --workspace server"
+  },
+  "devDependencies": {
+    "drizzle-orm": "^0.45.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/raymondoooo/teamledger.git"
+  },
+  "author": "raymondoooo",
+  "homepage": "https://github.com/raymondoooo/teamledger#readme",
+  "bugs": {
+    "url": "https://github.com/raymondoooo/teamledger/issues"
+  }
+}
