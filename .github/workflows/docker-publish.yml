@@ -173,6 +173,24 @@ jobs:
           fi
           echo "correctly refused to start without SESSION_SECRET"
 
+      - name: A correct password must never be rate limited
+        run: |
+          set -e
+          B=http://localhost:3000/api
+          # The limiter counts FAILED attempts only. Counting successes meant the
+          # tenth correct login in a window was refused, and with TRUST_PROXY off
+          # every client shares one bucket — so signing in from two devices could
+          # lock the treasurer out of their own instance with the right password.
+          # Runs before the spoofing test below, which deliberately exhausts the
+          # bucket.
+          for i in $(seq 1 15); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/auth/login" \
+              -H 'Content-Type: application/json' \
+              -d '{"email":"ci@example.com","password":"ci-password-123"}')
+            [ "$code" = "200" ] || { echo "FAIL: successful login #$i returned $code"; exit 1; }
+          done
+          echo "15 consecutive valid logins all accepted"
+
       - name: Login rate limit must not be bypassable via X-Forwarded-For
         run: |
           set -e

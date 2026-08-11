@@ -82,16 +82,24 @@ const idParam = z.coerce.number().int().positive();
 
 // --- health & setup -------------------------------------------------------
 
-// The only endpoints where guessing gets you something. `validate: false`
-// silences the library's proxy warnings — whether X-Forwarded-For is trusted is
-// decided once, deliberately, by TRUST_PROXY in index.ts.
+// The only endpoints where guessing gets you something.
+//
+// skipSuccessfulRequests is the important one: this limits *failed* attempts,
+// not use of the endpoint. Counting successes meant the tenth correct login in
+// a window was refused — and with TRUST_PROXY off every client shares a single
+// bucket, so signing in from a phone and a laptop could lock the treasurer out
+// of their own instance with the right password.
+//
+// `validate: false` silences the library's proxy warnings; whether
+// X-Forwarded-For is trusted is decided once, deliberately, by TRUST_PROXY.
 const credentialLimiter = rateLimit({
   windowMs: loginRateLimit.windowMs,
   limit: loginRateLimit.max,
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
-  message: { error: 'too many attempts — wait a few minutes and try again' },
+  message: { error: 'too many failed attempts — wait a few minutes and try again' },
 });
 
 // Deliberately queries the database. A container whose Postgres has gone away is
