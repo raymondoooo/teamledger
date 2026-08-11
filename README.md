@@ -109,6 +109,12 @@ hand to next season's treasurer.
 **Schedule**
 - Subscribe to the TeamSnap iCal feed; games and practices import and drive the
   derived costs.
+- **Repeating events are expanded**, so a weekly practice published as a single
+  recurring entry becomes twelve billable sessions rather than one. Individually
+  skipped weeks (`EXDATE`) and moved weeks (`RECURRENCE-ID`) are honoured.
+- Events the feed stops publishing are cancelled so they stop costing — but only
+  future ones, since a feed that drops past events as they age out must not erase
+  costs the team actually incurred.
 - Add events by hand, with a weekly repeat.
 - A primary trainer is attached to new events automatically.
 
@@ -168,13 +174,10 @@ practice. Correcting a type pins it, so later syncs will not change it back.
 
 ## Known limitations
 
-- **Recurring calendar events are not expanded.** If your feed publishes a weekly
-  practice as a single event with an `RRULE`, it imports as *one* practice and
-  bills one session. Check the Schedule page after your first sync: if twelve
-  practices appear as one row, this is why. Workaround: add them by hand with the
-  weekly repeat, or set an expected session count on the trainer.
-- **An event deleted outright in TeamSnap stays here** and keeps costing. Ones
-  marked cancelled stop billing correctly.
+- **Recurring events are expanded within the season window only.** A repeating
+  practice becomes one row per occurrence, bounded by the season's start and end
+  dates (or the season year if you have not set them), and capped at 400
+  occurrences per series. A rule extending beyond that window is clipped.
 - **No parent-facing view.** Parents don't log in; you send them a PDF statement.
 - **One admin account.** No co-treasurer, no password reset.
 - **`SESSION_SECRET` must be set**; the app will not start without it. Most

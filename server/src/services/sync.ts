@@ -17,6 +17,8 @@ export type SyncResult = {
   imported: number;
   updated: number;
   cancelled: number;
+  // Future events the feed stopped publishing, cancelled so they stop costing.
+  removed: number;
   skipped: number;
   error?: string;
 };
@@ -58,11 +60,138 @@ function isCancelled(component: VEvent): boolean {
   return /\bcancell?ed\b/i.test(text(component.summary) ?? '');
 }
 
+// One concrete occurrence of a calendar entry, already normalized. A repeating
+// practice becomes N of these.
+export type FeedOccurrence = {
+  // Stable across syncs. A repeating series gets one row per occurrence, keyed
+  // by its start, so editing week 7 does not disturb weeks 1-6.
+  externalUid: string;
+  title: string;
+  location: string | null;
+  startsAt: Date;
+  endsAt: Date | null;
+  cancelled: boolean;
+  description: string | null;
+};
+
+// A rule with no UNTIL and no COUNT repeats forever. The window bounds it, but a
+// daily rule over a two-year window is still 730 rows, so cap it as well.
+const MAX_OCCURRENCES_PER_SERIES = 400;
+
+// The span to expand recurring rules over. Uses the season's own dates when set;
+// otherwise a generous window around the season year, because a fall season runs
+// into the following calendar year.
+export function expansionWindow(season: {
+  year: number;
+  startDate: string | null;
+  endDate: string | null;
+}): { from: Date; to: Date } {
+  if (season.startDate && season.endDate) {
+    return {
+      from: new Date(`${season.startDate}T00:00:00Z`),
+      to: new Date(`${season.endDate}T23:59:59Z`),
+    };
+  }
+  return {
+    from: new Date(Date.UTC(season.year, 0, 1)),
+    to: new Date(Date.UTC(season.year + 1, 11, 31, 23, 59, 59)),
+  };
+}
+
+// Turns a parsed feed into concrete occurrences.
+//
+// This is the difference between a weekly practice costing one session and
+// costing twelve. A repeating practice can be published either as separate
+// VEVENTs or as one VEVENT carrying an RRULE, and the second shape used to
+// import as a single event — under-billing training by the length of the season.
+//
+// node-ical's expander applies EXDATE (individual weeks cancelled) and
+// RECURRENCE-ID overrides (one week moved) for us.
+export function expandFeedOccurrences(
+  parsed: CalendarResponse,
+  window: { from: Date; to: Date },
+): { occurrences: FeedOccurrence[]; skipped: number } {
+  const occurrences: FeedOccurrence[] = [];
+  let skipped = 0;
+
+  for (const component of Object.values(parsed)) {
+    if (!component || component.type !== 'VEVENT') continue;
+    const vevent = component as VEvent;
+    const uid = text(vevent.uid);
+    if (!uid || !vevent.start) {
+      skipped += 1;
+      continue;
+    }
+
+    // A RECURRENCE-ID entry is an override of one occurrence of another series.
+    // The expander folds it into its parent, so importing it separately would
+    // double-count that week.
+    if ((vevent as { recurrenceid?: unknown }).recurrenceid) continue;
+
+    const base = {
+      title: (text(vevent.summary) ?? 'Untitled').trim(),
+      location: text(vevent.location),
+      description: text(vevent.description),
+      cancelled: isCancelled(vevent),
+    };
+
+    if (!vevent.rrule) {
+      occurrences.push({
+        externalUid: uid,
+        startsAt: new Date(vevent.start),
+        endsAt: vevent.end ? new Date(vevent.end) : null,
+        ...base,
+      });
+      continue;
+    }
+
+    let instances: ReturnType<typeof ical.expandRecurringEvent>;
+    try {
+      instances = ical.expandRecurringEvent(vevent, { from: window.from, to: window.to });
+    } catch (err) {
+      // A malformed rule must not lose the whole series: fall back to the single
+      // base occurrence rather than dropping it.
+      console.error(`[sync] could not expand ${uid}: ${err instanceof Error ? err.message : err}`);
+      occurrences.push({
+        externalUid: uid,
+        startsAt: new Date(vevent.start),
+        endsAt: vevent.end ? new Date(vevent.end) : null,
+        ...base,
+      });
+      continue;
+    }
+
+    if (instances.length > MAX_OCCURRENCES_PER_SERIES) {
+      console.error(
+        `[sync] ${uid} expands to ${instances.length} occurrences; capping at ${MAX_OCCURRENCES_PER_SERIES}`,
+      );
+      instances = instances.slice(0, MAX_OCCURRENCES_PER_SERIES);
+    }
+
+    for (const inst of instances) {
+      const start = new Date(inst.start);
+      occurrences.push({
+        // Suffixed with the occurrence start so each week is its own row and
+        // keeps its own confirmed type, trainer and charge overrides.
+        externalUid: `${uid}#${start.toISOString()}`,
+        title: (text(inst.summary) ?? base.title).trim(),
+        location: text(inst.event?.location) ?? base.location,
+        description: text(inst.event?.description) ?? base.description,
+        startsAt: start,
+        endsAt: inst.end ? new Date(inst.end) : null,
+        cancelled: inst.isOverride ? isCancelled(inst.event) : base.cancelled,
+      });
+    }
+  }
+
+  return { occurrences, skipped };
+}
+
 export async function syncFeed(feedId: number): Promise<SyncResult> {
   const [feed] = await db.select().from(icalFeeds).where(eq(icalFeeds.id, feedId));
   if (!feed) throw new Error(`feed ${feedId} not found`);
 
-  const result: SyncResult = { feedId, imported: 0, updated: 0, cancelled: 0, skipped: 0 };
+  const result: SyncResult = { feedId, imported: 0, updated: 0, cancelled: 0, removed: 0, skipped: 0 };
 
   // Newly imported events get the primary trainer, so a team with one coach
   // does not have to set them one by one. Existing events keep whoever they
@@ -85,34 +214,31 @@ export async function syncFeed(feedId: number): Promise<SyncResult> {
     return { ...result, error: message };
   }
 
-  for (const component of Object.values(parsed)) {
-    if (!component || component.type !== 'VEVENT') continue;
-    const vevent = component as VEvent;
-    const uid = text(vevent.uid);
-    if (!uid || !vevent.start) {
-      result.skipped += 1;
-      continue;
-    }
+  if (!season) throw new Error(`season ${feed.seasonId} not found`);
 
-    const title = (text(vevent.summary) ?? 'Untitled').trim();
-    const location = text(vevent.location);
-    const cancelled = isCancelled(vevent);
-    const guessedType = classifyEvent(title, text(vevent.description) ?? undefined);
+  const { occurrences, skipped } = expandFeedOccurrences(parsed, expansionWindow(season));
+  result.skipped = skipped;
+
+  const seen = new Set<string>();
+
+  for (const occ of occurrences) {
+    seen.add(occ.externalUid);
+    const guessedType = classifyEvent(occ.title, occ.description ?? undefined);
 
     const [existing] = await db
       .select()
       .from(events)
-      .where(and(eq(events.seasonId, feed.seasonId), eq(events.externalUid, uid)));
+      .where(and(eq(events.seasonId, feed.seasonId), eq(events.externalUid, occ.externalUid)));
 
     if (existing) {
       await db
         .update(events)
         .set({
-          title,
-          location,
-          startsAt: new Date(vevent.start),
-          endsAt: vevent.end ? new Date(vevent.end) : null,
-          cancelled,
+          title: occ.title,
+          location: occ.location,
+          startsAt: occ.startsAt,
+          endsAt: occ.endsAt,
+          cancelled: occ.cancelled,
           // A type the treasurer confirmed is theirs, not ours. Re-guessing it
           // on every sync would silently undo their corrections and quietly
           // change the budget.
@@ -120,23 +246,44 @@ export async function syncFeed(feedId: number): Promise<SyncResult> {
         })
         .where(eq(events.id, existing.id));
       result.updated += 1;
-      if (cancelled && !existing.cancelled) result.cancelled += 1;
+      if (occ.cancelled && !existing.cancelled) result.cancelled += 1;
     } else {
       await db.insert(events).values({
         seasonId: feed.seasonId,
         feedId: feed.id,
         source: 'ical',
-        externalUid: uid,
-        title,
-        location,
-        startsAt: new Date(vevent.start),
-        endsAt: vevent.end ? new Date(vevent.end) : null,
+        externalUid: occ.externalUid,
+        title: occ.title,
+        location: occ.location,
+        startsAt: occ.startsAt,
+        endsAt: occ.endsAt,
         type: guessedType,
-        cancelled,
+        cancelled: occ.cancelled,
         trainerId: defaultTrainerId,
       });
       result.imported += 1;
     }
+  }
+
+  // Entries this feed used to publish and no longer does — a game removed from
+  // TeamSnap, or a repeating rule shortened from twelve weeks to ten.
+  //
+  // Only *future* ones are cancelled. A feed that publishes a rolling window
+  // drops past events as they age out, and cancelling those would silently erase
+  // costs the team genuinely incurred. They are marked rather than deleted so a
+  // hand-set type or charge override is never destroyed.
+  const fromThisFeed = await db
+    .select()
+    .from(events)
+    .where(and(eq(events.feedId, feed.id), eq(events.cancelled, false)));
+
+  const now = new Date();
+  for (const event of fromThisFeed) {
+    if (!event.externalUid || seen.has(event.externalUid)) continue;
+    if (event.startsAt <= now) continue;
+    await db.update(events).set({ cancelled: true }).where(eq(events.id, event.id));
+    result.cancelled += 1;
+    result.removed += 1;
   }
 
   await db
@@ -163,6 +310,7 @@ export async function syncAllFeeds(): Promise<SyncResult[]> {
         imported: 0,
         updated: 0,
         cancelled: 0,
+        removed: 0,
         skipped: 0,
         error: err instanceof Error ? err.message : String(err),
       });

@@ -73,7 +73,14 @@ other team's budget.
   covered by tests. Do not "simplify" that regex.
 - iCal string fields arrive either as a plain string or as `{val, params}`.
   Everything goes through the `text()` helper in `sync.ts`.
-- Recurring events are **not** expanded yet. See Known limitations in the README.
+- Recurring events **are** expanded, in `expandFeedOccurrences`. Each occurrence
+  gets `${uid}#${startISO}` as its external id, so week 7 keeps its own confirmed
+  type, trainer and charge overrides when the series re-syncs. A `RECURRENCE-ID`
+  entry is skipped as a standalone event because the expander folds it into its
+  parent — importing it too would bill that week twice.
+- Events absent from a re-synced feed are cancelled, **future ones only**. Feeds
+  that publish a rolling window drop past events as they age out, and cancelling
+  those would erase costs the team really incurred.
 
 ## Partial updates
 
