@@ -68,6 +68,34 @@ jobs:
       - name: Types must compile
         run: npm run build
 
+      # The published image is multi-arch, but the lockfile is written on x64.
+      # `npm install` on an x64 machine can prune the optional native bindings
+      # for every other platform out of the lockfile, and nothing notices until
+      # the arm64 leg of the release build dies with no bundler binary — after
+      # the tag is cut and every test has passed.
+      #
+      # Regenerate in place (`npm install --package-lock-only` with the existing
+      # lockfile present) rather than deleting it first, which is what prunes.
+      - name: Lockfile must still carry arm64 binaries
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          lock = json.load(open('package-lock.json'))
+          # The runtime is Alpine on arm64, so musl arm64 is the combination that
+          # has to be resolvable. A pruned lockfile keeps a stray arm64 entry or
+          # two but drops every musl one, so this is the check that actually
+          # discriminates.
+          musl = sorted(k.split('/')[-1] for k in lock['packages'] if 'linux-arm64-musl' in k)
+          if not musl:
+              print('FAIL: the lockfile has no linux-arm64-musl native packages.')
+              print('It was regenerated from scratch on x64, which prunes other')
+              print('platforms — the arm64 image would build with no native binaries.')
+              print('Fix: git checkout <last good> -- package-lock.json '
+                    '&& npm install --package-lock-only   (in place, do not delete it first)')
+              sys.exit(1)
+          print(f'arm64 musl binaries present: {", ".join(musl)}')
+          PY
+
   # Builds the image and exercises it the way a new self-hoster would: empty
   # database, no pre-seeded state, no host files. This is the check that catches
   # "works on my machine" regressions before they reach anyone.
