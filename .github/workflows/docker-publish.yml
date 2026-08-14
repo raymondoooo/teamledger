@@ -194,6 +194,28 @@ jobs:
           done
           echo "PWA assets OK"
 
+      # Every screen except the dashboard is a client-side route, so if the
+      # catch-all stops handing back index.html the whole app 404s on refresh
+      # and on any shared link — while /api and the static files above keep
+      # answering perfectly, which is what makes it easy to miss.
+      #
+      # It is a regex route (`/^(?!\/api).*/`), the exact construct that
+      # path-to-regexp rewrites have broken before, so it is worth a test of its
+      # own rather than being assumed from a green build.
+      - name: Client-side routes must fall back to index.html
+        run: |
+          set -e
+          for p in /budget /roster /schedule /bank /exports /settings /roster/1; do
+            code=$(curl -s -o /tmp/spa -w '%{http_code}' "http://localhost:3212$p")
+            [ "$code" = "200" ] || { echo "FAIL: $p returned $code"; exit 1; }
+            grep -qi '<!doctype html>' /tmp/spa || { echo "FAIL: $p did not return the app shell"; exit 1; }
+          done
+          # And the negative case: an unknown /api path must still 404 as JSON
+          # rather than being swallowed by the catch-all and answered with HTML.
+          code=$(curl -s -o /tmp/na -w '%{http_code}' http://localhost:3212/api/definitely-not-a-route)
+          grep -qi '<!doctype html>' /tmp/na && { echo "FAIL: /api/* fell through to the app shell"; exit 1; }
+          echo "client-side routing OK (api still returns $code, not HTML)"
+
       - name: A generated session secret must persist across a restart
         run: |
           set -e
