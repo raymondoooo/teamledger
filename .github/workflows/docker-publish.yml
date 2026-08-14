@@ -21,7 +21,7 @@ jobs:
   no-secrets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -58,8 +58,8 @@ jobs:
   unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -74,7 +74,7 @@ jobs:
   container:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build image
         run: docker build -t teamledger:ci .
@@ -471,13 +471,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -486,7 +486,7 @@ jobs:
       # is a real problem for self-hosters who redeploy often. Same image, two
       # places, no extra credentials.
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -497,7 +497,7 @@ jobs:
       # back to this repo.
       - name: Derive tags and labels
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: |
             ${{ secrets.DOCKERHUB_USERNAME }}/teamledger
@@ -507,7 +507,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
