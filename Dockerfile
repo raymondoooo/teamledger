@@ -2,9 +2,26 @@
 # and web is a Vite bundle. The runtime image carries only the compiled output
 # plus production dependencies, which keeps the published image small enough to
 # be a reasonable download for people self-hosting it from GitHub.
+#
+# ── Every stage is node:22-alpine, and they must not drift ──────────────────
+# better-sqlite3 is a native module compiled against a specific Node ABI. The
+# final stage copies node_modules wholesale from `deps`, so the .node binary
+# built there has to match the Node that will load it here. Bumping one stage
+# and not the others produces an image that builds cleanly and then dies on the
+# first query with NODE_MODULE_VERSION mismatch.
+#
+# Pinned to 22 specifically: we tried this on newer majors and 26 fails to
+# build, while 24 builds and then SEGFAULTS at runtime. Do not bump without
+# testing the running container, not just the build.
 
 FROM node:22-alpine AS build
 WORKDIR /src
+
+# better-sqlite3's install script falls back to node-gyp, so `npm ci` fails on
+# Alpine without a compiler even though the package bundles a musl prebuild.
+# Verified by removing it: the build dies at `npm ci`. None of this reaches the
+# final image; see the runtime stage below.
+RUN apk add --no-cache python3 make g++
 
 # Manifests first so the dependency layer stays cached across source edits.
 COPY package.json package-lock.json ./
@@ -16,9 +33,11 @@ COPY . .
 RUN npm run build
 
 # Production dependency tree, resolved from the same lockfile as the build
-# stage but without devDependencies.
+# stage but without devDependencies. This is the node_modules that ships, so
+# this is where better-sqlite3's binary is actually built.
 FROM node:22-alpine AS deps
 WORKDIR /src
+RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
 COPY server/package.json server/
 COPY web/package.json web/
@@ -54,6 +73,10 @@ COPY --from=deps /src/node_modules ./node_modules
 COPY --from=build /src/server/dist ./dist
 COPY --from=build /src/web/dist ./web-dist
 COPY server/migrations ./migrations
+# The one-time Postgres importer. Shipped in the image because after this port
+# there is no reason for anyone to have a source checkout — the upgrade path has
+# to work with nothing but the compose file. See the README.
+COPY scripts/import-postgres.cjs ./scripts/import-postgres.cjs
 # Carries "type": "module", without which Node would load dist/ as CommonJS.
 COPY server/package.json ./package.json
 
@@ -67,13 +90,13 @@ RUN mkdir -p /app/data/receipts && chown -R node:node /app/data
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-EXPOSE 3000
+EXPOSE 3212
 
 # Hits an endpoint that actually queries the database. A process that is up but
 # cannot read its own datastore is not healthy, and a plain port check would
 # happily call that fine.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget -q -O /dev/null http://127.0.0.1:${PORT:-3000}/api/health || exit 1
+  CMD wget -q -O /dev/null http://127.0.0.1:${PORT:-3212}/api/health || exit 1
 
 # Drizzle records applied migrations in its own table, so re-running on every
 # boot is a no-op once they're applied — and a brand-new database sets itself up

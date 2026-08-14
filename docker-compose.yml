@@ -1,46 +1,95 @@
 name: teamledger
 
-# teamledger — copy .env.example to .env, then `docker compose up -d --build`.
+# teamledger — self-hosted treasury for a youth sports team.
 #
-# One compose file, whatever you run it on. Everything environment-specific
-# lives in ./.env, which is gitignored, so the same file works unchanged on a
-# laptop, a NAS or a server.
+#   1. Save this file into an empty directory of its own.
+#   2. docker compose up -d
+#   3. Open http://localhost:3212 and pick a treasurer email and password.
 #
-# Listens on plain http at 3112. If you put a reverse proxy in front to
-# terminate TLS, set APP_URL to the https:// address you actually browse to —
-# that is what switches session cookies to Secure.
+# That's the whole install. No source checkout, no .env, no build step, no
+# database password to invent. The database is a file under ./data and the
+# session secret is generated on first boot.
 #
-# Prefer a prebuilt image to building from source? Replace `build: .` under the
-# app service with:
-#   image: ghcr.io/raymondoooo/teamledger:latest
+# Whoever opens that setup screen first claims the instance, so do step 3
+# before putting this anywhere the public can reach.
+#
+# To upgrade later:  docker compose pull && docker compose up -d
+#
+# Upgrading from teamledger 0.7 or earlier (the two-container Postgres build)?
+# Do NOT start this on top of the old stack — it shares the same compose
+# project name, so it would replace the old app container and leave your
+# Postgres data stranded. Follow "Upgrading from the Postgres version" in the
+# README first.
 
 services:
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    env_file: .env
-    volumes:
-      - ./db/data:/var/lib/postgresql/data
-    healthcheck:
-      # $$ defers expansion to the container's shell, so these resolve from
-      # env_file above instead of being interpolated by compose.
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   app:
-    build: .
+    image: raymondoooo/teamledger:latest
+    # Also published to GitHub Container Registry, if you prefer it:
+    #   image: ghcr.io/raymondoooo/teamledger:latest
+    #
+    # Pin as tightly as you like — :0.8.0, :0.8, :0 and :latest all exist.
+    container_name: teamledger
     restart: unless-stopped
-    env_file: .env
+
     ports:
-      - "3112:3000"
+      # host:container — change the left side if 3212 is already taken.
+      - "3212:3212"
+
     volumes:
-      # Receipt uploads attached to payments. Bind-mounted so they survive a
-      # rebuild and land in the same backup sweep as db/data.
-      - ./data/receipts:/app/data/receipts
-    # No source bind-mount: the frontend is a compiled Vite bundle, so changes
-    # need `docker compose up -d --build` rather than just a browser refresh.
-    depends_on:
-      db:
-        condition: service_healthy
+      # THIS DIRECTORY IS YOUR INSTALL. The database, its WAL sidecars, the
+      # nightly backups and every uploaded receipt live in here. Back this up
+      # and you have backed up everything; copy it to another machine and
+      # teamledger comes up there with your books intact.
+      #
+      # Nothing in here ever leaves your server: it is excluded from the Docker
+      # build context and from git, so it cannot end up in a published image or
+      # a pushed commit.
+      - ./data:/app/data
+
+    environment:
+      # Every date the app renders, and which day a game falls on when the
+      # calendar feed hands us a UTC timestamp. Set this to your team's local
+      # timezone or the schedule will drift by a day around midnight.
+      TZ: America/New_York
+
+      # How often to re-fetch the TeamSnap iCal feed, in minutes. TeamSnap can
+      # take up to 24h to publish schedule edits, so polling harder buys little.
+      # 0 disables the background sync.
+      ICAL_SYNC_INTERVAL_MINUTES: "360"
+
+      # ── Plain HTTP on a LAN (the default) ────────────────────────────────
+      # The address you actually browse to. Fine as-is for local use; set it to
+      # http://<your-server-ip>:3212 if you want emailed links to be right.
+      APP_URL: http://localhost:3212
+
+      # ── Behind an HTTPS reverse proxy ────────────────────────────────────
+      # nginx, Caddy, Nginx Proxy Manager, Traefik, Cloudflare Tunnel. Comment
+      # out the APP_URL above, uncomment these three, and point your proxy at
+      # this container's port 3212.
+      #
+      # APP_URL: https://teamledger.example.com
+      #
+      # Marks the session cookie HTTPS-only. Turn this on ONLY with TLS in
+      # front. On without TLS, the browser accepts the cookie at login and then
+      # refuses to send it back — you bounce to the login form forever, with no
+      # error explaining why. That is why it is off by default.
+      # SECURE_COOKIES: "true"
+      #
+      # Lets the login rate limiter see real client addresses instead of the
+      # proxy's. Turn this on ONLY when a proxy you control sets
+      # X-Forwarded-For. On without one, anyone can forge that header and give
+      # themselves a fresh rate-limit bucket on every request — which turns the
+      # login limiter into unlimited password guesses.
+      # TRUST_PROXY: "1"
+
+      # ── Rarely needed ────────────────────────────────────────────────────
+      # Signs the session cookie. One is generated on first boot and stored in
+      # the database; set this only if you would rather manage it yourself.
+      # Changing it logs you out but touches no data.
+      # SESSION_SECRET: ""
+      #
+      # Nightly database snapshots to data/backups, keeping the last 14.
+      # BACKUPS: "off"
+      #
+      # Free-text label echoed by /api/health, handy if you run more than one.
+      # BUILD_ID: "prod"

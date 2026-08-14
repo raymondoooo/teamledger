@@ -1,33 +1,33 @@
-import { drizzle } from 'drizzle-orm/node-postgres';
-import pg from 'pg';
+import fs from 'node:fs';
+import path from 'node:path';
+import Database from 'better-sqlite3';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
 import * as schema from './schema.js';
 
-// pg returns NUMERIC as a string and DATE as a JS Date in the server's local
-// timezone. We store money as integers and dates as plain calendar dates, so
-// the only override needed is DATE (OID 1082) — hand it back as the literal
-// 'YYYY-MM-DD' string rather than letting it become a timezone-shifted Date.
-pg.types.setTypeParser(1082, (value) => value);
-
-export const pool = new pg.Pool({
-  host: process.env.PGHOST ?? 'localhost',
-  port: Number(process.env.PGPORT ?? 5432),
-  user: process.env.PGUSER ?? 'teamledger',
-  password: process.env.PGPASSWORD ?? '',
-  database: process.env.PGDATABASE ?? 'teamledger',
-});
-
-// node-postgres emits 'error' on idle clients when the server goes away — a
-// database restart, a network blip, an idle timeout. An EventEmitter 'error'
-// with no listener is a hard crash in Node, so without this the whole app exits
-// the moment Postgres bounces. Restarting the database under a running app is a
-// completely ordinary thing for a self-hoster to do.
+// The database is a single file inside the data directory, alongside
+// data/receipts and data/backups. That is deliberate: it means the whole
+// install is one directory a treasurer can copy, and the nightly backup sweep
+// picks it up without being told about it separately.
 //
-// The pool recovers on its own: the next query opens a fresh connection. Log it
-// and stay up; /api/health reports 503 in the meantime so an orchestrator can
-// see the app is degraded rather than guessing from a port check.
-pool.on('error', (err) => {
-  console.error('[db] idle client error (pool will reconnect):', err.message);
-});
+// Resolved from process.cwd() for the same reason web-dist and migrations are —
+// the Dockerfile's WORKDIR is /app, so this is /app/data in the container and
+// server/data when running from a checkout.
+export const DATA_DIR = process.env.DATA_DIR ?? path.resolve(process.cwd(), 'data');
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
-export const db = drizzle(pool, { schema });
+export const sqlite = new Database(path.join(DATA_DIR, 'teamledger.db'));
+
+// Readers never block the writer and vice versa. Without this, a parent loading
+// their balance while the sync scheduler is writing events gets SQLITE_BUSY.
+sqlite.pragma('journal_mode = WAL');
+// Wait out a competing write rather than failing instantly. SQLite allows one
+// writer at a time; the iCal sync and a treasurer saving a payment can collide.
+sqlite.pragma('busy_timeout = 5000');
+// OFF by default in SQLite, and the schema is full of onDelete: 'cascade' that
+// would silently do nothing without it — deleting a season would leave its
+// events, expenses and payments behind as orphans. Enforced per connection, so
+// it belongs here rather than in a migration.
+sqlite.pragma('foreign_keys = ON');
+
+export const db = drizzle(sqlite, { schema });
 export { schema };

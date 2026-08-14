@@ -102,12 +102,13 @@ const credentialLimiter = rateLimit({
   message: { error: 'too many failed attempts — wait a few minutes and try again' },
 });
 
-// Deliberately queries the database. A container whose Postgres has gone away is
-// not healthy, but a handler that just returns a literal would report that it
-// is — and an orchestrator would keep routing traffic to it.
+// Deliberately queries the database. A container that cannot read its own
+// datastore — a corrupt file, a data directory that vanished from under a bind
+// mount — is not healthy, but a handler that just returns a literal would report
+// that it is, and an orchestrator would keep routing traffic to it.
 api.get('/health', async (_req, res) => {
   try {
-    await db.execute(sql`select 1`);
+    db.get(sql`select 1`);
     res.json({ ok: true, buildId: process.env.BUILD_ID ?? 'unknown', db: 'up' });
   } catch (err) {
     console.error('[health] database unreachable:', err instanceof Error ? err.message : err);

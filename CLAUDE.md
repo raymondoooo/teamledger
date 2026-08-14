@@ -14,6 +14,65 @@ line. Those are the two numbers a treasurer otherwise totals by hand.
 If you find yourself building an outbound `.ics` feed, that is a
 misunderstanding — it was considered and deliberately rejected.
 
+## Storage
+
+The database is **SQLite**, embedded in the app container as a single file at
+`$DATA_DIR/teamledger.db` (default `/app/data`). There is no database service.
+That directory *is* the install — database, WAL sidecars, receipts and the
+nightly `VACUUM INTO` snapshots — which is what makes "back it up" mean "copy one
+folder" and what lets the app snapshot itself.
+
+Things that will bite you, all of them load-bearing:
+
+- **Foreign keys are OFF by default in SQLite.** `db/index.ts` sets
+  `pragma foreign_keys = ON` on the connection. Without it every
+  `onDelete: 'cascade'` in the schema silently does nothing and deleting a
+  season leaves its expenses behind as orphans that still total into somebody's
+  budget. There is a test for this; do not delete it.
+- **`text({ enum: [...] })` is a TypeScript constraint only.** SQLite will accept
+  any string. The two columns where a bad value moves money rather than merely
+  looking wrong — `cost_rules.kind` and `expenses.source` — carry real `CHECK`
+  constraints as well. `source = 'derived'` in particular decides which rows
+  `recalculateDerivedExpenses` deletes and rewrites.
+- **Timestamps are `integer(..., { mode: 'timestamp' })`** — unix seconds on
+  disk, a JS `Date` in the app, which is exactly what node-postgres handed back,
+  so nothing above the storage layer had to change.
+- **Calendar dates are `text`**, holding a plain `'YYYY-MM-DD'`. Do not "fix"
+  them into timestamps. They were always plain dates; Postgres had to be *forced*
+  to behave that way with a `setTypeParser` hack, and text is the natural fit.
+- **The driver is synchronous.** Drizzle's builders still work under `await`, so
+  existing code reads unchanged, and `db.get()` / `db.run()` are used where a
+  bare `sql` fragment is needed — note that `db.execute()` does not exist on this
+  dialect and `db.get()` returns **the row itself**, not `{ rows: [...] }`. If
+  you ever add a transaction, `db.transaction()` here is synchronous: passing it
+  an `async` callback will not do what the pg version did.
+
+## Nothing private leaves the server
+
+This app holds a real family's financial records. A published Docker image and a
+pushed git commit are both world-readable and effectively permanent — deleting a
+tag or committing a deletion does not undo either. So this is enforced by CI
+gates, not by care:
+
+- **`PUBLISHED IMAGE MUST CONTAIN NO DATA`** builds the image and then proves the
+  artifact is clean: nothing under `/app/data`, no `.db`/`.sqlite`/`.dump`/export
+  anywhere, no `.env`, no `.git`. `.dockerignore` is what prevents the leak; this
+  proves it actually worked this time.
+- **`no-secrets`** runs before anything else and fails if a database, receipt,
+  `.env` or key is *tracked* — in the working tree or anywhere in history.
+  `.gitignore` does nothing for a file that is already tracked, which is the way
+  this normally goes wrong.
+
+Both gates were verified against a deliberately poisoned image and a planted
+`.env`, so they are known to fail rather than merely known to pass. If you touch
+`.dockerignore`, `.gitignore` or the `COPY` lines in the `Dockerfile`, assume you
+are touching this guarantee.
+
+`data/` is the whole install — database, WAL sidecars, nightly backups and
+receipt uploads. It is excluded from git and from the build context, and it is a
+mount point at runtime, so it could only ever end up in an image by someone
+removing that exclusion.
+
 ## Money
 
 **Every amount is an integer number of cents.** There is no float anywhere in the
@@ -118,9 +177,19 @@ the exports. Mobile rules live in two media queries at the bottom of
 
 ## Deployment quirks
 
-- **`.dockerignore` is load-bearing.** `db/data` is the Postgres bind mount, owned
-  by the container's postgres user; without it the build fails with a permission
-  error the moment the stack has run once.
+- **Every Dockerfile stage must stay on `node:22-alpine`.** better-sqlite3 is a
+  native module compiled against a Node ABI, and the final stage copies
+  `node_modules` from `deps`, so a stage that drifts produces an image that
+  builds fine and then dies on the first query. 26 fails to build and 24 builds
+  and then segfaults at runtime, so this is not theoretical. Both stages that run
+  `npm ci` need `python3 make g++` — the package bundles a musl prebuild, but its
+  install script still falls back to node-gyp and `npm ci` fails without a
+  compiler. The runtime stage has none of it, and CI asserts that.
+- **`.dockerignore` is load-bearing.** `data/` holds a real install — excluded so
+  a contributor's own team finances can never be baked into a published image,
+  and because `/app/data` is a mount point that would shadow it anyway. `db/data`
+  stays ignored for anyone still carrying the old Postgres bind mount: it is
+  owned by the container's postgres user and fails the build outright.
 - The Dockerfile puts `web-dist` and `migrations` beside `dist/` at the WORKDIR
   root because both are resolved from `process.cwd()`, not their in-repo paths.
 - The app runs as the `node` user and ships no build toolchain. CI asserts both.

@@ -4,13 +4,8 @@ import 'dotenv/config';
 export default {
   schema: './src/db/schema.ts',
   out: './migrations',
-  dialect: 'postgresql',
+  dialect: 'sqlite',
   dbCredentials: {
-    host: process.env.PGHOST ?? 'localhost',
-    port: Number(process.env.PGPORT ?? 5432),
-    user: process.env.PGUSER ?? 'teamledger',
-    password: process.env.PGPASSWORD ?? '',
-    database: process.env.PGDATABASE ?? 'teamledger',
-    ssl: false,
+    url: './data/teamledger.db',
   },
 } satisfies Config;

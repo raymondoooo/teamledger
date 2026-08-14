@@ -4,11 +4,13 @@ import {
   api,
   fmt,
   parseMoney,
+  seasonLabel,
   type CostRule,
   type Feed,
   type Tournament,
   type Trainer,
 } from '../api.js';
+import TeamSeasonForm from '../TeamSeasonForm.js';
 import { AddSection, Collapsible } from '../ui.js';
 
 export default function Settings({ ctx }: { ctx: SeasonContext }) {
@@ -39,6 +41,8 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
   return (
     <>
       {error && <div className="error">{error}</div>}
+
+      <TeamsAndSeasons ctx={ctx} />
 
       <AddSection
         title="Trainers and rates"
@@ -292,6 +296,76 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
 
 // A small number you can edit in place. Saves on blur or Enter so the estimate
 // fields do not each need their own Save button.
+// Adding a team or a season used to be possible only on the first-run Welcome
+// screen, which stops rendering the moment you have a season — so a treasurer
+// who took on a second team, or who wanted next season without closing this
+// one, had nowhere to go. Rollover is not that: it closes the current season on
+// purpose.
+function TeamsAndSeasons({ ctx }: { ctx: SeasonContext }) {
+  const byTeam = ctx.teams
+    .map((t) => ({ team: t, list: ctx.seasons.filter((s) => s.teamId === t.id) }))
+    .sort((a, b) => a.team.name.localeCompare(b.team.name));
+
+  return (
+    <AddSection
+      title="Teams and seasons"
+      addLabel="+ Add team or season"
+      form={(close) => (
+        <div style={{ marginBottom: 12, maxWidth: 440 }}>
+          <TeamSeasonForm
+            teams={ctx.teams}
+            autoFocus={false}
+            submitLabel="Create season"
+            onCreated={(season) => {
+              close();
+              // Pull the new team/season into the app, then switch to it —
+              // creating a season you are not taken to reads as a no-op.
+              ctx.reload();
+              ctx.selectSeason(season.id);
+            }}
+          />
+        </div>
+      )}
+    >
+      <table>
+        <thead>
+          <tr>
+            <th>Team</th>
+            <th className="hide-sm">Age group</th>
+            <th>Seasons</th>
+          </tr>
+        </thead>
+        <tbody>
+          {byTeam.map(({ team, list }) => (
+            <tr key={team.id}>
+              <td>
+                {team.name}
+                {team.id === ctx.team.id && <span className="badge grey"> current</span>}
+              </td>
+              <td className="hide-sm">{team.ageGroup ?? '—'}</td>
+              <td>
+                {list.length
+                  ? list.map((s) => (
+                      <button
+                        key={s.id}
+                        className="link"
+                        style={{ marginRight: 10 }}
+                        onClick={() => ctx.selectSeason(s.id)}
+                      >
+                        {seasonLabel(s)}
+                        {s.status === 'closed' ? ' (closed)' : ''}
+                      </button>
+                    ))
+                  : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </AddSection>
+  );
+}
+
 function TournamentPaid({
   tournament,
   onChanged,

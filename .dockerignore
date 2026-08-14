@@ -1,8 +1,13 @@
-# The Postgres bind mount lives at db/data and is owned by the postgres user, so
-# without this the build fails outright with a permission error the moment the
-# stack has been started once.
+# The live install: the SQLite database, its WAL sidecars, the nightly backups
+# and every uploaded receipt. Excluded for two reasons — a developer's real team
+# finances must never be baked into a published image, and /app/data is a mount
+# point in the container, so anything copied here would just be shadowed anyway.
+data/
+
+# Legacy Postgres bind mount, from before the single-container port. Still
+# ignored because it is owned by the postgres user and unreadable to the build,
+# which fails the whole build with a permission error rather than skipping it.
 db/data
-data/receipts
 
 # Never let secrets into an image that might get pushed somewhere.
 .env

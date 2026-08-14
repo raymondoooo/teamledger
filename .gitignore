@@ -13,8 +13,10 @@ backups-encrypted/
 db/data/
 volumes/db/data/
 
-# Payment receipt uploads — real financial records, never committed.
-data/receipts/
+# The live install — the database itself, its WAL sidecars, the nightly
+# snapshots and payment receipt uploads. Real financial records, never
+# committed.
+data/
 
 # TypeScript incremental build cache.
 *.tsbuildinfo

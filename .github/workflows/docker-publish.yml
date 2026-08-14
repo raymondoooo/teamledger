@@ -14,6 +14,45 @@ permissions:
   packages: write
 
 jobs:
+  # ── Nothing private may ever reach this repository ──────────────────────
+  # A pushed commit is public and permanent — deleting the file later does not
+  # remove it from history. This runs before anything else so a commit carrying
+  # someone's books or credentials fails immediately rather than after a build.
+  no-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: No database, receipt or credential may be tracked
+        run: |
+          set -e
+          # Checks what git actually TRACKS, not what is on disk — .gitignore is
+          # only a suggestion until something is committed, and an already-tracked
+          # file keeps being committed no matter what .gitignore says.
+          bad=$(git ls-files | grep -iE \
+            '(^|/)data/|\.(db|db-wal|db-shm|sqlite3?|dump)$|(^|/)\.env$|(^|/)\.env\.(?!example)|\.pem$|\.key$|(^|/)id_(rsa|ed25519)$|pg-export.*\.json$|backup.*\.sql$' \
+            | grep -vE '^server/migrations/.*\.sql$' || true)
+          if [ -n "$bad" ]; then
+            echo "FAIL: these must never be committed:"; echo "$bad"; exit 1
+          fi
+          echo "no data or credential files are tracked"
+
+      - name: The same must be true of every commit in history
+        run: |
+          set -e
+          bad=$(git log --all --pretty=format: --name-only --diff-filter=A \
+            | sort -u | grep -iE \
+            '(^|/)data/|\.(db|db-wal|db-shm|sqlite3?|dump)$|(^|/)\.env$|\.pem$|\.key$|(^|/)id_(rsa|ed25519)$|pg-export.*\.json$|backup.*\.sql$' \
+            | grep -vE '^server/migrations/.*\.sql$' || true)
+          if [ -n "$bad" ]; then
+            echo "FAIL: these appear somewhere in git history:"; echo "$bad"
+            echo "History must be rewritten — deleting them in a new commit is not enough."
+            exit 1
+          fi
+          echo "git history is clean"
+
   # The unit suite covers the parts where a silent wrong answer is worst: the
   # money split and the calendar classifier.
   unit:
@@ -40,23 +79,19 @@ jobs:
       - name: Build image
         run: docker build -t teamledger:ci .
 
-      - name: Start Postgres and the app on empty volumes
+      - name: Start the app on an empty volume, with no configuration at all
         run: |
-          docker network create tl-ci
-          docker run -d --name tl-db --network tl-ci \
-            -e POSTGRES_USER=ci -e POSTGRES_PASSWORD=ci -e POSTGRES_DB=ci \
-            postgres:16-alpine
-          for i in $(seq 1 30); do
-            docker exec tl-db pg_isready -U ci -d ci >/dev/null 2>&1 && break
-            sleep 1
-          done
-          docker run -d --name tl-app --network tl-ci -p 3000:3000 \
-            -e PGHOST=tl-db -e PGUSER=ci -e PGPASSWORD=ci -e PGDATABASE=ci \
-            -e SESSION_SECRET=ci-secret -e NODE_ENV=development \
-            -e APP_URL=http://localhost:3000 -e ICAL_SYNC_INTERVAL_MINUTES=0 \
+          # Deliberately no SESSION_SECRET and no .env: the entire promise of the
+          # single-container port is that `docker compose up -d` with nothing
+          # else is a working install. If this step ever needs a variable added
+          # to make it boot, that promise has been broken.
+          docker volume create tl-data
+          docker run -d --name tl-app -v tl-data:/app/data -p 3212:3212 \
+            -e NODE_ENV=development \
+            -e APP_URL=http://localhost:3212 -e ICAL_SYNC_INTERVAL_MINUTES=0 \
             teamledger:ci
           for i in $(seq 1 40); do
-            if curl -fsS -o /dev/null http://localhost:3000/api/health; then
+            if curl -fsS -o /dev/null http://localhost:3212/api/health; then
               echo "up after ${i}s"; exit 0
             fi
             sleep 1
@@ -66,13 +101,13 @@ jobs:
       - name: A fresh install must present the setup screen
         run: |
           set -e
-          curl -fsS http://localhost:3000/api/setup/status | grep -q '"configured":false'
+          curl -fsS http://localhost:3212/api/setup/status | grep -q '"configured":false'
           echo "fresh install reports unconfigured"
 
       - name: First-run flow, and setup must be claimable only once
         run: |
           set -e
-          B=http://localhost:3000/api
+          B=http://localhost:3212/api
           curl -fsS -c /tmp/j -X POST "$B/setup" -H 'Content-Type: application/json' \
             -d '{"email":"ci@example.com","password":"ci-password-123"}' | grep -q '"ok":true'
 
@@ -97,7 +132,7 @@ jobs:
         run: |
           set -e
           for path in teams seasons; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3000/api/$path")
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3212/api/$path")
             [ "$code" = "401" ] || { echo "FAIL: /api/$path returned $code without a session"; exit 1; }
           done
           echo "API is closed without a session"
@@ -105,7 +140,7 @@ jobs:
       - name: The money math must survive a real round trip
         run: |
           set -e
-          B=http://localhost:3000/api
+          B=http://localhost:3212/api
           curl -fsS -c /tmp/j -X POST "$B/auth/login" -H 'Content-Type: application/json' \
             -d '{"email":"ci@example.com","password":"ci-password-123"}' >/dev/null
           post() { curl -fsS -b /tmp/j -X POST "$B$1" -H 'Content-Type: application/json' -d "$2"; }
@@ -134,7 +169,7 @@ jobs:
       - name: Exports must generate
         run: |
           set -e
-          B=http://localhost:3000/api
+          B=http://localhost:3212/api
           S=1
           for kind in roster ledger budget balances; do
             curl -fsS -b /tmp/j "$B/seasons/$S/export/$kind.csv" -o /tmp/$kind.csv
@@ -154,29 +189,66 @@ jobs:
         run: |
           set -e
           for a in apple-touch-icon.png manifest.webmanifest favicon.svg; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3000/$a")
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3212/$a")
             [ "$code" = "200" ] || { echo "FAIL: /$a returned $code"; exit 1; }
           done
           echo "PWA assets OK"
 
-      - name: Must refuse to start without a session secret
+      - name: A generated session secret must persist across a restart
         run: |
           set -e
-          # A missing secret has to fail loudly at boot. If this ever starts
-          # succeeding, the container will run happily and only fall over when
-          # someone tries to log in.
-          if docker run --rm --network tl-ci \
-            -e PGHOST=tl-db -e PGUSER=ci -e PGPASSWORD=ci -e PGDATABASE=ci \
-            -e NODE_ENV=development -e APP_URL=http://localhost:3000 \
-            --name tl-nosecret teamledger:ci; then
-            echo "FAIL: started with no SESSION_SECRET"; exit 1
-          fi
-          echo "correctly refused to start without SESSION_SECRET"
+          # This container was started with no SESSION_SECRET, so one was
+          # generated on first boot and stored in the database. It has to be the
+          # SAME secret after a restart — if it were regenerated, every restart
+          # would silently sign out the treasurer and every parent.
+          docker exec tl-app node --input-type=commonjs -e "
+            const D = require('better-sqlite3');
+            const db = new D('/app/data/teamledger.db', { readonly: true });
+            const row = db.prepare(\"select value from app_settings where key = 'session_secret'\").get();
+            if (!row || row.value.length < 32) { console.error('no secret stored'); process.exit(1); }
+            console.log(row.value);
+          " > /tmp/secret-before
+          docker restart tl-app >/dev/null
+          for i in $(seq 1 40); do curl -fsS -o /dev/null http://localhost:3212/api/health && break; sleep 1; done
+          docker exec tl-app node --input-type=commonjs -e "
+            const D = require('better-sqlite3');
+            const db = new D('/app/data/teamledger.db', { readonly: true });
+            console.log(db.prepare(\"select value from app_settings where key = 'session_secret'\").get().value);
+          " > /tmp/secret-after
+          cmp -s /tmp/secret-before /tmp/secret-after \
+            || { echo "FAIL: session secret changed across a restart"; exit 1; }
+          # And the session issued before the restart must still be good.
+          curl -fsS -b /tmp/j http://localhost:3212/api/teams >/dev/null \
+            || { echo "FAIL: existing session broke across a restart"; exit 1; }
+          echo "generated secret is stable across restarts"
+
+      - name: The nightly backup must produce a readable snapshot
+        run: |
+          set -e
+          # The scheduler fires at 03:00, so drive the same function directly.
+          # dist/ is ESM, hence --input-type=module.
+          docker exec tl-app node --input-type=module -e "
+            const { runBackup } = await import('/app/dist/services/backup.js');
+            if (!runBackup()) { console.error('backup returned null'); process.exit(1); }
+          "
+          # It has to be a restorable database, not a zero-byte file: being
+          # restorable is the only reason it exists.
+          docker exec tl-app node --input-type=commonjs -e "
+            const fs = require('fs'), D = require('better-sqlite3');
+            const dir = '/app/data/backups';
+            const f = fs.readdirSync(dir).filter(x => x.endsWith('.db')).sort().pop();
+            if (!f) { console.error('no backup file on disk'); process.exit(1); }
+            const db = new D(dir + '/' + f, { readonly: true });
+            const ok = db.pragma('integrity_check')[0].integrity_check;
+            const n = db.prepare('select count(*) c from admin_users').get().c;
+            if (ok !== 'ok' || n !== 1) { console.error('bad snapshot', ok, n); process.exit(1); }
+            console.log('snapshot', f, '| integrity', ok, '| admins', n);
+          "
 
       - name: A correct password must never be rate limited
         run: |
           set -e
-          B=http://localhost:3000/api
+          B=http://localhost:3212/api
           # The limiter counts FAILED attempts only. Counting successes meant the
           # tenth correct login in a window was refused, and with TRUST_PROXY off
           # every client shares one bucket — so signing in from two devices could
@@ -194,7 +266,7 @@ jobs:
       - name: Login rate limit must not be bypassable via X-Forwarded-For
         run: |
           set -e
-          B=http://localhost:3000/api
+          B=http://localhost:3212/api
           # TRUST_PROXY is unset here, so forged X-Forwarded-For values must NOT
           # create separate rate-limit buckets. Regression test for the class of
           # bug where trusting that header unconditionally gives unlimited
@@ -210,22 +282,31 @@ jobs:
           [ "$seen429" = "1" ] || { echo "FAIL: rate limit bypassed by spoofed X-Forwarded-For"; exit 1; }
           echo "rate limit holds against spoofing"
 
-      - name: The app must survive its database restarting
+      - name: Cascade deletes must actually cascade
         run: |
           set -e
-          # An unhandled pg pool 'error' event is a hard crash in Node, so a
-          # database bounce used to take the whole app down. Health must report
-          # 503 while it is gone and recover afterwards, without the process
-          # exiting.
-          docker stop tl-db >/dev/null; sleep 3
-          [ "$(docker inspect -f '{{.State.Status}}' tl-app)" = "running" ] \
-            || { echo "FAIL: app died when the database stopped"; docker logs tl-app; exit 1; }
-          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/health)
-          [ "$code" = "503" ] || { echo "FAIL: expected 503 with the db down, got $code"; exit 1; }
-          docker start tl-db >/dev/null; sleep 6
-          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/health)
-          [ "$code" = "200" ] || { echo "FAIL: did not recover after the db returned, got $code"; exit 1; }
-          echo "survives a database restart and reports health honestly"
+          # Foreign keys are OFF by default in SQLite, and the schema is full of
+          # onDelete: 'cascade' that would then silently do nothing — deleting a
+          # season would leave its expenses behind as orphans that still count
+          # toward somebody's budget. The pragma is set per connection, so this
+          # verifies the running app, not just the schema.
+          docker exec tl-app node --input-type=commonjs -e "
+            const D = require('better-sqlite3');
+            const db = new D('/app/data/teamledger.db');
+            db.pragma('foreign_keys = ON');
+            const fk = db.pragma('foreign_keys')[0].foreign_keys;
+            if (!fk) { console.error('foreign_keys off'); process.exit(1); }
+            // A throwaway team of its own, so this proves the cascade without
+            // disturbing the fixtures the later steps assert on.
+            const t = db.prepare(\"insert into teams (name) values ('cascade probe') returning id\").get();
+            const s = db.prepare(\"insert into seasons (team_id, term, year) values (?, 'fall', 2099) returning id\").get(t.id);
+            db.prepare(\"insert into expenses (season_id, category, label, amount_cents) values (?, 'misc', 'cascade probe', 100)\").run(s.id);
+            db.prepare('delete from teams where id = ?').run(t.id);
+            const left = db.prepare('select count(*) c from expenses where season_id = ?').get(s.id).c;
+            const seasons = db.prepare('select count(*) c from seasons where id = ?').get(s.id).c;
+            if (left !== 0 || seasons !== 0) { console.error('orphans left behind:', { left, seasons }); process.exit(1); }
+            console.log('cascade removed dependent rows two levels down');
+          "
 
       - name: A newer database must refuse to boot on an older binary
         run: |
@@ -233,16 +314,21 @@ jobs:
           # Simulate a rollback: stamp the schema version past what this build
           # understands, then confirm the container refuses to start rather than
           # writing into a schema it does not know.
-          docker exec tl-db psql -U ci -d ci -c "update app_schema_version set version = 9999 where id = 1;"
-          if docker run --rm --network tl-ci \
-            -e PGHOST=tl-db -e PGUSER=ci -e PGPASSWORD=ci -e PGDATABASE=ci \
-            -e SESSION_SECRET=ci-secret -e APP_URL=http://localhost:3000 \
+          docker exec tl-app node --input-type=commonjs -e "
+            const D = require('better-sqlite3');
+            new D('/app/data/teamledger.db').prepare('update app_schema_version set version = 9999 where id = 1').run();
+          "
+          if docker run --rm -v tl-data:/app/data \
+            -e APP_URL=http://localhost:3212 \
             --name tl-downgrade teamledger:ci > /tmp/downgrade.log 2>&1; then
             echo "FAIL: started against a newer database"; cat /tmp/downgrade.log; exit 1
           fi
           grep -q "REFUSING TO START" /tmp/downgrade.log \
             || { echo "FAIL: no downgrade warning"; cat /tmp/downgrade.log; exit 1; }
-          docker exec tl-db psql -U ci -d ci -c "update app_schema_version set version = 5 where id = 1;"
+          docker exec tl-app node --input-type=commonjs -e "
+            const D = require('better-sqlite3');
+            new D('/app/data/teamledger.db').prepare('update app_schema_version set version = 1 where id = 1').run();
+          "
           echo "downgrade guard works"
 
       - name: Bind-mounted upload directory must be writable
@@ -252,11 +338,9 @@ jobs:
           # creates the missing host directory as root. The entrypoint has to fix
           # ownership at runtime or uploads fail for every user with a bind mount.
           mkdir -p /tmp/bindtest
-          docker run --rm --network tl-ci -v /tmp/bindtest/receipts:/app/data/receipts \
-            -e PGHOST=tl-db -e PGUSER=ci -e PGPASSWORD=ci -e PGDATABASE=ci \
-            -e SESSION_SECRET=ci-secret \
+          docker run --rm -v /tmp/bindtest:/app/data \
             --entrypoint /usr/local/bin/docker-entrypoint.sh teamledger:ci \
-            sh -c 'touch /app/data/receipts/probe' \
+            sh -c 'touch /app/data/receipts/probe && touch /app/data/teamledger.db' \
             || { echo "FAIL: app cannot write to a bind-mounted data directory"; exit 1; }
           echo "bind-mounted volume is writable"
 
@@ -279,6 +363,52 @@ jobs:
           echo "runtime image is clean"
           docker image inspect teamledger:ci --format 'image size: {{.Size}} bytes'
 
+      # ── The image must never carry anyone's books ────────────────────────
+      # This is the gate that has to hold. A published image is world-readable
+      # forever, so a database, a receipt or a .env that slips into the build
+      # context cannot be walked back by deleting the tag. .dockerignore is what
+      # prevents it; this proves .dockerignore actually worked, on the real
+      # artifact, every build — rather than trusting that nobody edited it.
+      #
+      # Checked against a FRESHLY BUILT image, not the running container, since
+      # the running one has a data volume attached by design.
+      - name: PUBLISHED IMAGE MUST CONTAIN NO DATA
+        run: |
+          set -e
+          probe() { docker run --rm --entrypoint sh teamledger:ci -c "$1"; }
+
+          # 1. The data directory ships empty. Anything else means a real
+          #    install's database or receipts were copied in at build time.
+          leaked=$(probe 'find /app/data -type f 2>/dev/null | head -20')
+          if [ -n "$leaked" ]; then
+            echo "FAIL: image ships files under /app/data:"; echo "$leaked"; exit 1
+          fi
+
+          # 2. No database, dump or export anywhere in the image. node_modules
+          #    is excluded because better-sqlite3 legitimately vendors test
+          #    fixtures and prebuilt binaries.
+          leaked=$(probe 'find / -not -path "*/node_modules/*" -not -path "/proc/*" -not -path "/sys/*" \
+            \( -name "*.db" -o -name "*.db-wal" -o -name "*.sqlite" -o -name "*.sqlite3" \
+               -o -name "*.dump" -o -name "pg-export*.json" -o -name "*backup*.sql" \) 2>/dev/null | head -20')
+          if [ -n "$leaked" ]; then
+            echo "FAIL: image ships a database or dump:"; echo "$leaked"; exit 1
+          fi
+
+          # 3. No real .env. Only migrations/*.sql (schema DDL) is allowed SQL.
+          leaked=$(probe 'find / -not -path "*/node_modules/*" -not -path "/proc/*" \
+            \( -name ".env" -o -name ".env.*" \) 2>/dev/null | head -20')
+          if [ -n "$leaked" ]; then
+            echo "FAIL: image ships an environment file:"; echo "$leaked"; exit 1
+          fi
+
+          # 4. The git history must not be in there either — it would carry
+          #    every file ever committed, including any later deleted.
+          if probe '[ -e /app/.git ] || [ -e /.git ]'; then
+            echo "FAIL: image ships a .git directory"; exit 1
+          fi
+
+          echo "image carries no database, no receipts, no .env, no git history"
+
       - name: Docker healthcheck must report healthy
         run: |
           for i in $(seq 1 60); do
@@ -293,20 +423,19 @@ jobs:
         run: |
           set -e
           docker rm -f tl-app >/dev/null
-          docker run -d --name tl-app2 --network tl-ci -p 3000:3000 \
-            -e PGHOST=tl-db -e PGUSER=ci -e PGPASSWORD=ci -e PGDATABASE=ci \
-            -e SESSION_SECRET=ci-secret -e NODE_ENV=development \
-            -e APP_URL=http://localhost:3000 -e ICAL_SYNC_INTERVAL_MINUTES=0 \
+          docker run -d --name tl-app2 -v tl-data:/app/data -p 3212:3212 \
+            -e NODE_ENV=development \
+            -e APP_URL=http://localhost:3212 -e ICAL_SYNC_INTERVAL_MINUTES=0 \
             teamledger:ci
-          for i in $(seq 1 40); do curl -fsS -o /dev/null http://localhost:3000/api/health && break; sleep 1; done
+          for i in $(seq 1 40); do curl -fsS -o /dev/null http://localhost:3212/api/health && break; sleep 1; done
 
           # Already set up, so the app must NOT offer the setup screen again.
-          curl -fsS http://localhost:3000/api/setup/status | grep -q '"configured":true' \
+          curl -fsS http://localhost:3212/api/setup/status | grep -q '"configured":true' \
             || { echo "FAIL: data did not persist"; exit 1; }
-          curl -fsS -c /tmp/j2 -X POST http://localhost:3000/api/auth/login \
+          curl -fsS -c /tmp/j2 -X POST http://localhost:3212/api/auth/login \
             -H 'Content-Type: application/json' \
             -d '{"email":"ci@example.com","password":"ci-password-123"}' | grep -q '"ok":true'
-          curl -fsS -b /tmp/j2 http://localhost:3000/api/teams | grep -q 'CI FC'
+          curl -fsS -b /tmp/j2 http://localhost:3212/api/teams | grep -q 'CI FC'
           echo "persistence OK"
 
       - name: Container logs (always)

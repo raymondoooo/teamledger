@@ -1,9 +1,11 @@
+import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
+import { eq } from 'drizzle-orm';
 import type { NextFunction, Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { secureCookies } from './config.js';
 import { db } from './db/index.js';
-import { adminUsers } from './db/schema.js';
+import { adminUsers, appSettings } from './db/schema.js';
 
 // One admin: the treasurer. There is no signup route — the first-run setup
 // endpoint refuses to run once an admin exists, so an instance exposed to the
@@ -14,12 +16,46 @@ import { adminUsers } from './db/schema.js';
 const COOKIE = 'teamledger_session';
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
+const SECRET_KEY = 'session_secret';
+let cachedSecret: string | null = null;
+
+// Generated once, on first boot, and kept in the database — which is what lets
+// `docker compose up -d` be the whole install with no .env at all. Storing it
+// beside the data it protects also means it survives a container recreate and
+// travels with the data/ folder when someone moves hosts, so parents are not
+// logged out by a routine upgrade.
+//
+// SESSION_SECRET still wins if it is set, for anyone who would rather manage it
+// themselves. Note that switching between the two logs the admin out; it does
+// not affect any stored data.
+function generatedSecret(): string {
+  const existing = db
+    .select({ value: appSettings.value })
+    .from(appSettings)
+    .where(eq(appSettings.key, SECRET_KEY))
+    .get();
+  if (existing) return existing.value;
+
+  const created = randomBytes(32).toString('base64');
+  db.insert(appSettings).values({ key: SECRET_KEY, value: created }).onConflictDoNothing().run();
+  console.log('[teamledger] generated a session secret and saved it to the database');
+
+  // Re-read rather than returning `created`: if anything else got there first
+  // the insert above was a no-op and that row is the one signing cookies.
+  const row = db
+    .select({ value: appSettings.value })
+    .from(appSettings)
+    .where(eq(appSettings.key, SECRET_KEY))
+    .get();
+  if (!row) throw new Error('could not persist a session secret');
+  return row.value;
+}
+
 function secret(): string {
-  const value = process.env.SESSION_SECRET;
-  if (!value) {
-    throw new Error('SESSION_SECRET is not set — refusing to sign sessions with a default');
-  }
-  return value;
+  if (cachedSecret) return cachedSecret;
+  const fromEnv = process.env.SESSION_SECRET?.trim();
+  cachedSecret = fromEnv ? fromEnv : generatedSecret();
+  return cachedSecret;
 }
 
 export async function adminExists(): Promise<boolean> {

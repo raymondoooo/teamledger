@@ -19,7 +19,12 @@ export type SeasonContext = {
   team: Team;
   season: Season;
   seasons: Season[];
+  // Every team on the instance, not just the current one — one treasurer can
+  // run more than one team, and Settings needs the full list to add to it.
+  teams: Team[];
   reload: () => void;
+  // Jump to another season, including one that has only just been created.
+  selectSeason: (id: number) => void;
 };
 
 export default function App() {
@@ -74,7 +79,21 @@ export default function App() {
     return <Welcome teams={teams} onCreated={reload} />;
   }
 
-  const ctx: SeasonContext = { team, season, seasons, reload };
+  const ctx: SeasonContext = { team, season, seasons, teams, reload, selectSeason: setSeasonId };
+
+  // With one team the team name is already in the header, so plain season names
+  // read better. With two, "Fall 2026" is ambiguous — group the list by team so
+  // it is never a guess which set of books you are about to open.
+  const grouped = teams
+    .map((t) => ({ team: t, list: seasons.filter((s) => s.teamId === t.id) }))
+    .filter((g) => g.list.length > 0);
+
+  const seasonOption = (s: Season) => (
+    <option key={s.id} value={s.id}>
+      {seasonLabel(s)}
+      {s.status === 'closed' ? ' (closed)' : ''}
+    </option>
+  );
 
   const logout = () =>
     api.post('/auth/logout').then(() => {
@@ -110,12 +129,13 @@ export default function App() {
             onChange={(e) => setSeasonId(Number(e.target.value))}
             aria-label="Season"
           >
-            {seasons.map((s) => (
-              <option key={s.id} value={s.id}>
-                {seasonLabel(s)}
-                {s.status === 'closed' ? ' (closed)' : ''}
-              </option>
-            ))}
+            {grouped.length > 1
+              ? grouped.map((g) => (
+                  <optgroup key={g.team.id} label={g.team.name}>
+                    {g.list.map(seasonOption)}
+                  </optgroup>
+                ))
+              : seasons.map(seasonOption)}
           </select>
           {season.status === 'closed' && <span className="badge grey">Closed</span>}
         </div>

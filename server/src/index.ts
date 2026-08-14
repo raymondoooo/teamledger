@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import express from 'express';
 import { trustProxy } from './config.js';
 import { api } from './routes/api.js';
+import { startBackupScheduler } from './services/backup.js';
 import { startSyncScheduler } from './services/sync.js';
 
 const app = express();
@@ -28,22 +29,10 @@ app.get(/^(?!\/api).*/, (_req, res) => {
   res.sendFile(path.join(webDist, 'index.html'));
 });
 
-// Fail fast rather than at the first login attempt. Without this the container
-// starts, serves the setup screen, and only reveals the missing configuration
-// when someone tries to sign in — which reads like a bug in the app rather than
-// a line missing from .env.
-if (!process.env.SESSION_SECRET) {
-  console.error(
-    '[teamledger] SESSION_SECRET is not set. Generate one with:\n' +
-      '  openssl rand -base64 32\n' +
-      'and put it in your .env before starting.',
-  );
-  process.exit(1);
-}
-
-const port = Number(process.env.PORT ?? 3000);
+const port = Number(process.env.PORT ?? 3212);
 app.listen(port, '0.0.0.0', () => {
   console.log(`[teamledger] listening on ${port} (build ${process.env.BUILD_ID ?? 'unknown'})`);
   console.log(`[teamledger] trust proxy: ${trustProxy ? 'on' : 'off'}`);
   startSyncScheduler();
+  startBackupScheduler();
 });
