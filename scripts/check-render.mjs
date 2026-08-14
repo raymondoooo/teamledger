@@ -22,8 +22,22 @@ const browser = await chromium.launch({ args: ['--no-sandbox'] });
 const page = await browser.newPage();
 
 const problems = [];
-page.on('console', (m) => m.type() === 'error' && problems.push(`console: ${m.text()}`));
+
+// An uncaught exception is always a fault — that is what a broken render looks
+// like from the outside.
 page.on('pageerror', (e) => problems.push(`uncaught: ${e.message}`));
+
+// Console errors need one exception. Loading the app signed-out is the normal
+// state on this page: /api/auth/me answers 401, the browser logs a failed
+// resource, and the app correctly shows the login form. Treating that as a
+// failure would mean this check only ever passed against a pristine instance
+// and broke the moment anything created an admin.
+page.on('console', (m) => {
+  if (m.type() !== 'error') return;
+  const text = m.text();
+  if (/Failed to load resource/i.test(text) && /\b(401|403)\b/.test(text)) return;
+  problems.push(`console: ${text}`);
+});
 page.on('requestfailed', (r) => problems.push(`failed request: ${r.url()}`));
 
 let failed = false;
