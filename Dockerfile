@@ -8,11 +8,13 @@
 # final stage copies node_modules wholesale from `deps`, so the .node binary
 # built there has to match the Node that will load it here. Bumping one stage
 # and not the others produces an image that builds cleanly and then dies on the
-# first query with NODE_MODULE_VERSION mismatch.
+# first query with NODE_MODULE_VERSION mismatch. That is the rule to respect
+# here: bump all three together or none.
 #
-# Pinned to 22 specifically: we tried this on newer majors and 26 fails to
-# build, while 24 builds and then SEGFAULTS at runtime. Do not bump without
-# testing the running container, not just the build.
+# 22 is a floor, not a hard ceiling — the dependabot PR moving all three stages
+# to 26 passes the full container suite, SQLite tests included. Bump only via a
+# PR that runs that suite, because a Node bump has to be proven against the
+# RUNNING container, not just a successful build.
 
 FROM node:22-alpine AS build
 WORKDIR /src

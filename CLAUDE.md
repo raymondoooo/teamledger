@@ -177,14 +177,16 @@ the exports. Mobile rules live in two media queries at the bottom of
 
 ## Deployment quirks
 
-- **Every Dockerfile stage must stay on `node:22-alpine`.** better-sqlite3 is a
-  native module compiled against a Node ABI, and the final stage copies
-  `node_modules` from `deps`, so a stage that drifts produces an image that
-  builds fine and then dies on the first query. 26 fails to build and 24 builds
-  and then segfaults at runtime, so this is not theoretical. Both stages that run
-  `npm ci` need `python3 make g++` — the package bundles a musl prebuild, but its
-  install script still falls back to node-gyp and `npm ci` fails without a
-  compiler. The runtime stage has none of it, and CI asserts that.
+- **Every Dockerfile stage must move together.** better-sqlite3 is a native
+  module compiled against a Node ABI, and the final stage copies `node_modules`
+  from `deps`, so a stage that drifts produces an image that builds fine and then
+  dies on the first query with NODE_MODULE_VERSION. The pin is 22; it is a floor
+  rather than a ceiling, and the open dependabot PR moving all three stages to 26
+  passes the whole container suite. Bump only through a PR that runs it — a Node
+  bump has to be proven against the running container, not just the build. Both
+  stages that run `npm ci` need `python3 make g++`: the package bundles a musl
+  prebuild, but its install script still falls back to node-gyp and `npm ci`
+  fails without a compiler. The runtime stage has none of it, and CI asserts it.
 - **`.dockerignore` is load-bearing.** `data/` holds a real install — excluded so
   a contributor's own team finances can never be baked into a published image,
   and because `/app/data` is a mount point that would shadow it anyway. `db/data`
