@@ -216,6 +216,18 @@ jobs:
           grep -qi '<!doctype html>' /tmp/na && { echo "FAIL: /api/* fell through to the app shell"; exit 1; }
           echo "client-side routing OK (api still returns $code, not HTML)"
 
+      # Everything above this point can pass while every screen is blank white.
+      # A dependency bump once left two copies of React in the tree; it threw on
+      # mount, rendered nothing, and the server stayed perfectly healthy — right
+      # money, right routes, right HTML, empty page. Only a browser can tell the
+      # difference, so one runs here.
+      - name: The app must actually render, not just return HTML
+        run: |
+          set -e
+          npm i --no-save playwright@1
+          npx playwright install --with-deps chromium
+          node scripts/check-render.mjs http://localhost:3212
+
       - name: A generated session secret must persist across a restart
         run: |
           set -e
