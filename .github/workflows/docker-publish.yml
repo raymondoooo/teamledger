@@ -194,6 +194,42 @@ jobs:
           print("budget math OK:", b['quotedPerPlayerCents'], "per player, shares sum exactly")
           PY
 
+      # Every screen in the app is one of these reads. The Bank screen once
+      # shipped entirely broken -- a Postgres `::int` cast that SQLite cannot
+      # parse -- and the suite stayed green because it only ever asked for
+      # /teams, /budget and the exports. A 500 on any of these is a page the
+      # treasurer cannot open, so all of them get requested.
+      - name: Every read endpoint must answer
+        run: |
+          set -e
+          B=http://localhost:3212/api
+          fail=0
+          check() {
+            code=$(curl -s -o /tmp/resp -w '%{http_code}' -b /tmp/j "$B$1")
+            if [ "$code" != "200" ]; then
+              echo "  FAIL $1 -> $code: $(head -c 200 /tmp/resp)"; fail=1
+            else
+              echo "  ok   $1"
+            fi
+          }
+          check /auth/me
+          check /teams
+          check /seasons
+          check /teams/1/bank
+          check /teams/1/bank/export.csv
+          check /teams/1/trainers
+          check /teams/1/untransferred
+          check /seasons/1/budget
+          check /seasons/1/roster
+          check /seasons/1/events
+          check /seasons/1/payments
+          check /seasons/1/cost-rules
+          check /seasons/1/feeds
+          check /seasons/1/tournaments
+          check /seasons/1/trainer-ledger
+          [ "$fail" = "0" ] || { echo "one or more screens would be broken"; exit 1; }
+          echo "every read endpoint answers 200"
+
       - name: Exports must generate
         run: |
           set -e
@@ -558,3 +594,22 @@ jobs:
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Keeps the Docker Hub overview in step with a release, so the page people
+      # land on is never describing an older version. It syncs a page written
+      # for Docker Hub rather than the README, because the README's screenshots
+      # are repo-relative paths that would render as broken images there.
+      #
+      # Never allowed to fail a release: the images are already pushed by this
+      # point, and a stale description is not worth failing a build over. If it
+      # reports a failure, Docker Hub's description API can be fussy about
+      # tokens — a password secret may be needed instead of the PAT.
+      - name: Sync the Docker Hub description
+        continue-on-error: true
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/teamledger
+          short-description: "Self-hosted treasury for a youth sports team — prices your TeamSnap calendar into a budget. One container, SQLite inside."
+          readme-filepath: ./docs/dockerhub.md

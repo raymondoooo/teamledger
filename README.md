@@ -12,6 +12,42 @@ actually on the schedule — including when one gets cancelled.
 
 Ships with an empty database. Your data stays on your machine.
 
+![The dashboard: season totals, and who still owes what](docs/screenshots/dashboard.png)
+
+<sub>Every screenshot on this page is invented data. Note the balances —
+$674.24 next to $674.23. Dues rarely divide evenly, so the shares are computed
+to sum to the team total exactly rather than rounding each one up.</sub>
+
+<details>
+<summary><b>More screenshots</b> — budget, roster, schedule, bank, settings</summary>
+
+**Budget** — expenses by category, offset by credits and fundraising. The ref-fee
+and training lines are priced from the calendar, not typed in.
+
+![Budget](docs/screenshots/budget.png)
+
+**Roster** — dues, instalments and what each player has paid.
+
+![Roster](docs/screenshots/roster.png)
+
+**Schedule** — imported from TeamSnap. Each game and practice carries the cost it
+generates.
+
+![Schedule](docs/screenshots/schedule.png)
+
+**Bank** — the real account, plus the money still sitting in your personal Venmo.
+
+![Bank](docs/screenshots/bank.png)
+
+**Settings** — teams and seasons, trainers, cost rules, tournaments, and the
+TeamSnap feed.
+
+![Settings](docs/screenshots/settings.png)
+
+Light mode versions are alongside these in [`docs/screenshots/`](docs/screenshots).
+
+</details>
+
 ## Quick start
 
 Requires Docker and Docker Compose. Save
@@ -157,6 +193,10 @@ hand to next season's treasurer.
 - **Season rollover** — close a season and open the next with the same roster.
   Overpayments follow the player as a credit; leftover team funds arrive as a
   credit line.
+- **More than one team** on the same instance, if you are treasurer twice over.
+  Add them under Settings → Teams and seasons; each team keeps its own roster,
+  trainers, bank account and books, and the season picker groups by team so two
+  teams both having a "Fall 2026" is never ambiguous.
 - Exports: CSV (roster, ledger, budget, balances, bank ledger) and PDF (budget
   sheet, detailed budget report, per-player statement).
 - Works on a phone, and installs to the home screen as a standalone app.

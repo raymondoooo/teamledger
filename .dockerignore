@@ -9,6 +9,10 @@ data/
 # which fails the whole build with a permission error rather than skipping it.
 db/data
 
+# Screenshots and long-form docs. Only the README-facing material, and it is
+# several megabytes of PNG that the build has no use for.
+docs/
+
 # Never let secrets into an image that might get pushed somewhere.
 .env
 .env.*

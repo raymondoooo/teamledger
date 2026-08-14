@@ -93,8 +93,11 @@ export async function getLedger(teamId: number): Promise<BankLedger> {
   // Money this team has received from parents that has not reached the account.
   const held = await db
     .select({
-      total: sql<number>`coalesce(sum(${payments.amountCents}), 0)::int`,
-      count: sql<number>`count(*)::int`,
+      // `cast(... as integer)`, not Postgres's `::int` — SQLite cannot parse the
+      // `::` cast at all and fails the whole query with `unrecognized token: ":"`,
+      // which took down the entire Bank screen.
+      total: sql<number>`cast(coalesce(sum(${payments.amountCents}), 0) as integer)`,
+      count: sql<number>`cast(count(*) as integer)`,
     })
     .from(payments)
     .innerJoin(seasons, eq(payments.seasonId, seasons.id))
