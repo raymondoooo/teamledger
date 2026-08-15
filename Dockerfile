@@ -19,31 +19,32 @@
 FROM node:22-alpine AS build
 WORKDIR /src
 
-# better-sqlite3's install script falls back to node-gyp, so `npm ci` fails on
-# Alpine without a compiler even though the package bundles a musl prebuild.
-# Verified by removing it: the build dies at `npm ci`. None of this reaches the
-# final image; see the runtime stage below.
-RUN apk add --no-cache python3 make g++
-
+# --ignore-scripts is what keeps this fast. better-sqlite3's install script runs
+# prebuild-install and then falls back to compiling the SQLite amalgamation with
+# node-gyp — which needs python3/make/g++ and, on the emulated arm64 leg of the
+# release build, took over 90 minutes before it was cancelled. The package
+# already bundles a prebuilt binary for every platform we publish, musl arm64
+# included, and node-gyp-build picks the right one at require time. So the
+# compile was never buying anything.
+#
 # Manifests first so the dependency layer stays cached across source edits.
 COPY package.json package-lock.json ./
 COPY server/package.json server/
 COPY web/package.json web/
-RUN npm ci
+RUN npm ci --ignore-scripts
 
 COPY . .
 RUN npm run build
 
 # Production dependency tree, resolved from the same lockfile as the build
 # stage but without devDependencies. This is the node_modules that ships, so
-# this is where better-sqlite3's binary is actually built.
+# this is where better-sqlite3's bundled prebuild has to land.
 FROM node:22-alpine AS deps
 WORKDIR /src
-RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
 COPY server/package.json server/
 COPY web/package.json web/
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts
 
 FROM node:22-alpine
 WORKDIR /app
