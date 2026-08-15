@@ -609,7 +609,10 @@ jobs:
         uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          # Docker Hub's description API rejects the ordinary push token with
+          # 403 Forbidden. It needs either an account password or a PAT scoped
+          # for it, so DOCKERHUB_PASSWORD is preferred when present.
+          password: ${{ secrets.DOCKERHUB_PASSWORD || secrets.DOCKERHUB_TOKEN }}
           repository: ${{ secrets.DOCKERHUB_USERNAME }}/teamledger
-          short-description: "Self-hosted treasury for a youth sports team — prices your TeamSnap calendar into a budget. One container, SQLite inside."
+          short-description: "Self-hosted treasury for a youth sports team. Prices your TeamSnap calendar into a budget."
           readme-filepath: ./docs/dockerhub.md
