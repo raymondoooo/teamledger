@@ -113,7 +113,7 @@ export default function Schedule({ ctx }: { ctx: SeasonContext }) {
           )}
           <span className="notice">
             {feeds.length === 0
-              ? 'No calendar feed configured — add your TeamSnap URL on the Settings page.'
+              ? 'No calendar feed configured — add your calendar URL on the Settings page.'
               : `${feeds.length} feed${feeds.length > 1 ? 's' : ''}. Last sync: ${
                   feeds[0].lastSyncedAt ? new Date(feeds[0].lastSyncedAt).toLocaleString() : 'never'
                 }`}
@@ -206,8 +206,8 @@ export default function Schedule({ ctx }: { ctx: SeasonContext }) {
           </tbody>
         </table>
         <p className="notice">
-          Cancelled events stop costing the team. Choosing a type pins it, so the next sync from
-          TeamSnap will not change it back.
+          Cancelled events stop costing the team. Choosing a type pins it, so the next sync will
+          not change it back.
         </p>
       </div>
 
@@ -236,7 +236,7 @@ export default function Schedule({ ctx }: { ctx: SeasonContext }) {
   );
 }
 
-// Events that never came from TeamSnap: a scrimmage the coach arranged by text,
+// Events that never came from the calendar feed: a scrimmage arranged by text,
 // a tournament weekend, an extra session added late.
 function AddEvent({
   seasonId,

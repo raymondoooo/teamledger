@@ -5,10 +5,12 @@ team treasurers end up maintaining: what the season costs, what each player owes
 who has paid, what's actually in the team bank account, and what carries over
 when the season ends.
 
-The thing it does that a spreadsheet cannot: it reads your **TeamSnap calendar**
-and prices it. Set "ref fee is $75 a game" and "Sam charges $200 a session", and
-the ref-fee and training totals come from how many games and practices are
-actually on the schedule — including when one gets cancelled.
+The thing it does that a spreadsheet cannot: it reads your **schedule** and
+prices it. Point it at any iCal feed — TeamSnap, SportsEngine, Spond, a club's
+ICS export, even a plain Google Calendar. Set "ref fee is $75 a game" and "Sam
+charges $200 a session", and the ref-fee and training totals come from how many
+games and practices are actually on the schedule — including when one gets
+cancelled.
 
 Ships with an empty database. Your data stays on your machine.
 
@@ -30,7 +32,7 @@ and training lines are priced from the calendar, not typed in.
 
 ![Roster](docs/screenshots/roster.png)
 
-**Schedule** — imported from TeamSnap. Each game and practice carries the cost it
+**Schedule** — imported from your calendar feed. Each game and practice carries the cost it
 generates.
 
 ![Schedule](docs/screenshots/schedule.png)
@@ -40,7 +42,7 @@ generates.
 ![Bank](docs/screenshots/bank.png)
 
 **Settings** — teams and seasons, trainers, cost rules, tournaments, and the
-TeamSnap feed.
+calendar feed.
 
 ![Settings](docs/screenshots/settings.png)
 
@@ -178,7 +180,8 @@ hand to next season's treasurer.
 - Mark an expense or tournament fee paid and the withdrawal is written for you.
 
 **Schedule**
-- Subscribe to the TeamSnap iCal feed; games and practices import and drive the
+- Subscribe to any iCal feed — TeamSnap, SportsEngine, Spond, a club ICS export,
+  a shared Google Calendar; games and practices import and drive the
   derived costs.
 - **Repeating events are expanded**, so a weekly practice published as a single
   recurring entry becomes twelve billable sessions rather than one. Individually
@@ -241,10 +244,11 @@ is deliberate:
   hand themselves a fresh rate-limit bucket on every request, turning the login
   limiter into unlimited password guesses.
 
-### Connecting TeamSnap
+### Connecting a calendar
 
-In TeamSnap: **Schedule → Subscribe / Export**, copy the calendar link, and paste
-it into **Settings → TeamSnap calendar**. It polls every 6 hours by default and
+Any iCal (`.ics`) or `webcal://` URL works. In TeamSnap, the one most teams
+have: **Schedule → Subscribe / Export**, copy the link, and paste it into
+**Settings → Calendar feed**. It polls every 6 hours by default and
 there's a **Sync now** button on the Schedule page.
 
 Event types are guessed from the title — "vs Rivals" is a game, "Practice" is a

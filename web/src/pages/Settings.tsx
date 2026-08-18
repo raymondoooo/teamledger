@@ -81,7 +81,7 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
         <p className="notice">
           A trainer's rate is charged for <em>every</em> event they are attached to, whatever its
           type. The <strong>primary</strong> trainer is attached automatically to new events —
-          imported from TeamSnap or added by hand — so a one-coach team never has to set it.
+          imported from the calendar or added by hand — so a one-coach team never has to set it.
         </p>
       </AddSection>
 
@@ -226,7 +226,7 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
       </AddSection>
 
       <Collapsible
-        title="TeamSnap calendar"
+        title="Calendar feed"
         hint={
           feeds.length ? (
             <span className="muted">— {feeds.length} feed{feeds.length > 1 ? 's' : ''}</span>
@@ -238,8 +238,9 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
       >
       <div className="panel">
         <p className="notice" style={{ marginTop: 0 }}>
-          In TeamSnap, open <strong>Schedule → Subscribe / Export</strong> and copy the calendar
-          link. Paste it here and teamledger will pull in games and practices to price them.
+          Any iCal (<code>.ics</code>) or <code>webcal://</code> link works. In TeamSnap, the one
+          most teams have: open <strong>Schedule → Subscribe / Export</strong> and copy the link.
+          Paste it here and teamledger will pull in games and practices to price them.
         </p>
         <table>
           <tbody>

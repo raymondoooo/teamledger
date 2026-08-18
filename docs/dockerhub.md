@@ -5,10 +5,12 @@ team treasurers end up maintaining: what the season costs, what each player
 owes, who has paid, what is actually in the team bank account, and what carries
 over when the season ends.
 
-The thing it does that a spreadsheet cannot: it reads your **TeamSnap calendar**
-and prices it. Set "ref fee is $75 a game" and "Sam charges $200 a session", and
-the ref-fee and training totals come from how many games and practices are
-actually on the schedule — including when one gets cancelled.
+The thing it does that a spreadsheet cannot: it reads your **schedule** and
+prices it. Point it at any iCal feed — TeamSnap, SportsEngine, Spond, a club's
+ICS export, even a plain Google Calendar. Set "ref fee is $75 a game" and "Sam
+charges $200 a session", and the ref-fee and training totals come from how many
+games and practices are actually on the schedule — including when one gets
+cancelled.
 
 ## Quick start
 

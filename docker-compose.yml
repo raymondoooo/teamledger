@@ -52,7 +52,7 @@ services:
       # timezone or the schedule will drift by a day around midnight.
       TZ: America/New_York
 
-      # How often to re-fetch the TeamSnap iCal feed, in minutes. TeamSnap can
+      # How often to re-fetch the calendar feed, in minutes. TeamSnap, for one, can
       # take up to 24h to publish schedule edits, so polling harder buys little.
       # 0 disables the background sync.
       ICAL_SYNC_INTERVAL_MINUTES: "360"

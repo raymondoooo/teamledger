@@ -614,5 +614,5 @@ jobs:
           # for it, so DOCKERHUB_PASSWORD is preferred when present.
           password: ${{ secrets.DOCKERHUB_PASSWORD || secrets.DOCKERHUB_TOKEN }}
           repository: ${{ secrets.DOCKERHUB_USERNAME }}/teamledger
-          short-description: "Self-hosted treasury for a youth sports team. Prices your TeamSnap calendar into a budget."
+          short-description: "Self-hosted treasury for a youth sports team. Prices your iCal schedule into a budget."
           readme-filepath: ./docs/dockerhub.md
