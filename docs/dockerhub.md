@@ -41,6 +41,9 @@ session secret is generated on first boot.
 Whoever opens that setup screen first claims the instance, so do it before
 putting teamledger anywhere the public can reach.
 
+The Budget page also drafts the post for your team's message board — dues, the
+instalment dates and your Venmo handle, worded and ready to copy.
+
 ## Tags
 
 `latest`, plus semver tags — pin as tightly as you like: `0.8.2`, `0.8`, `0`.

@@ -30,6 +30,7 @@ export type Team = {
   club: string | null;
   ageGroup: string | null;
   sport: string;
+  venmoHandle: string | null;
 };
 
 export type Season = {

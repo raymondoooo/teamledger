@@ -182,6 +182,7 @@ api.post(
         club: z.string().nullish(),
         ageGroup: z.string().nullish(),
         sport: z.string().default('soccer'),
+        venmoHandle: z.string().nullish(),
       })
       .parse(req.body);
     const [team] = await db.insert(teams).values(body).returning();
@@ -199,6 +200,7 @@ api.patch(
         club: z.string().nullish(),
         ageGroup: z.string().nullish(),
         sport: z.string().optional(),
+        venmoHandle: z.string().nullish(),
       })
       .parse(req.body);
     const [team] = await db.update(teams).set(body).where(eq(teams.id, id)).returning();

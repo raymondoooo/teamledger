@@ -41,6 +41,11 @@ generates.
 
 ![Bank](docs/screenshots/bank.png)
 
+**Message for the team** — the Budget page drafts the post for your team board,
+with the real figures and dates already in it.
+
+![Team message](docs/screenshots/team-message.png)
+
 **Settings** — teams and seasons, trainers, cost rules, tournaments, and the
 calendar feed.
 
@@ -162,6 +167,10 @@ hand to next season's treasurer.
   not booked yet.
 
 **Money in**
+- **Messages for the team board.** The Budget page drafts the post — dues, the
+  instalment dates, your Venmo handle — in four flavours: dues announced, a
+  first-payment reminder, a final-payment nudge a week out, and a gentle chase
+  for stragglers. Editable before you copy it.
 - A payment ledger — every payment is a dated row with a method and a note, not a
   Yes/No checkbox, so the books survive a handover.
 - Tick-box first and final instalments straight from the roster.

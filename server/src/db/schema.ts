@@ -73,6 +73,10 @@ export const teams = sqliteTable('teams', {
   club: text('club'),
   ageGroup: text('age_group'),
   sport: text('sport').notNull().default('soccer'),
+  // The treasurer's own Venmo, for the messages the Budget page drafts to post
+  // on the team board. Team-scoped rather than global: someone treasurer for
+  // two teams may well collect for them separately.
+  venmoHandle: text('venmo_handle'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(now),
 });
 

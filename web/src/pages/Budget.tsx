@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SeasonContext } from '../App.js';
 import { api, fmt, parseMoney, type BudgetLine, type SeasonBudget } from '../api.js';
-import { AddSection } from '../ui.js';
+import TeamMessage from '../TeamMessage.js';
+import { AddSection, Collapsible } from '../ui.js';
 
 const EXPENSE_CATEGORIES = [
   ['training', 'Training'],
@@ -165,6 +166,10 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
           </tbody>
         </table>
       </AddSection>
+
+      <Collapsible title="Message for the team" hint={<span className="muted">— ready to paste</span>}>
+        <TeamMessage team={ctx.team} season={ctx.season} budget={budget} onTeamChange={ctx.reload} />
+      </Collapsible>
 
       <h2>What each player owes</h2>
       <div className="panel table-wrap">

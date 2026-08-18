@@ -1,0 +1,1 @@
+ALTER TABLE `teams` ADD `venmo_handle` text;
