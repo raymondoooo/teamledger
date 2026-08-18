@@ -74,6 +74,19 @@ function compose(kind: Kind, team: Team, season: Season, budget: SeasonBudget): 
   const split = firstAmount > 0 && firstAmount < budget.quotedPerPlayerCents;
   const remainder = fmt(Math.max(0, budget.quotedPerPlayerCents - firstAmount));
 
+  // Credits and fundraising can cover the whole season, which makes the
+  // per-player figure zero or negative. "Each player owes -$33.33" is not a
+  // sentence to post anywhere, so say the useful thing instead.
+  if (budget.quotedPerPlayerCents <= 0) {
+    return [
+      `Good news — ${label} is fully covered by credits, sponsorship and fundraising.`,
+      '',
+      'There is nothing to collect from players this season. I will let you know if that changes.',
+      '',
+      'Thanks!',
+    ].join('\n');
+  }
+
   switch (kind) {
     case 'announce': {
       const lines = [`Hi everyone — ${label} dues are set.`, ''];
@@ -145,7 +158,10 @@ export default function TeamMessage({
   const hasSplit =
     (season.firstPaymentCents ?? 0) > 0 &&
     (season.firstPaymentCents ?? 0) < budget.quotedPerPlayerCents;
-  const kinds = (Object.keys(LABELS) as Kind[]).filter((k) => k !== 'first' || hasSplit);
+  const nothingDue = budget.quotedPerPlayerCents <= 0;
+  const kinds = nothingDue
+    ? (['announce'] as Kind[])
+    : (Object.keys(LABELS) as Kind[]).filter((k) => k !== 'first' || hasSplit);
 
   const [kind, setKind] = useState<Kind>('announce');
   const [handle, setHandle] = useState(team.venmoHandle ?? '');
@@ -224,10 +240,10 @@ export default function TeamMessage({
         </div>
       </div>
 
-      {budget.quotedPerPlayerCents === 0 && (
+      {nothingDue && (
         <p className="notice">
-          Dues are still {fmt(0)} — add your expenses first, or the message will tell everyone
-          they owe nothing.
+          Credits cover the season, so there is nothing to collect — the only message that makes
+          sense is the announcement. If that looks wrong, check your expenses are entered.
         </p>
       )}
 
