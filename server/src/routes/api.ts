@@ -229,6 +229,7 @@ api.post(
         teamId: idParam,
         term: z.enum(['fall', 'spring', 'summer', 'winter']),
         year: z.number().int(),
+        name: z.string().nullish(),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),
         firstPaymentCents: money.nullish(),
@@ -247,6 +248,7 @@ api.patch(
     const id = idParam.parse(req.params.id);
     const body = z
       .object({
+        name: z.string().nullish(),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),
         firstPaymentCents: money.nullish(),
@@ -1284,13 +1286,22 @@ api.post(
 
 async function seasonMeta(seasonId: number) {
   const [row] = await db
-    .select({ teamName: teams.name, term: seasons.term, year: seasons.year })
+    .select({
+      teamName: teams.name,
+      term: seasons.term,
+      year: seasons.year,
+      name: seasons.name,
+    })
     .from(seasons)
     .innerJoin(teams, eq(seasons.teamId, teams.id))
     .where(eq(seasons.id, seasonId));
   if (!row) throw new Error('season not found');
   const term = row.term.charAt(0).toUpperCase() + row.term.slice(1);
-  return { teamName: row.teamName, seasonLabel: `${term} ${row.year}`, slug: `${row.term}-${row.year}` };
+  // Mirrors seasonLabel() in the web app, so a renamed season reads the same on
+  // screen and on the PDF a parent receives. The slug stays term-year: it names
+  // downloaded files, and a free-text name is not safe in a filename.
+  const label = row.name?.trim() ? row.name.trim() : `${term} ${row.year}`;
+  return { teamName: row.teamName, seasonLabel: label, slug: `${row.term}-${row.year}` };
 }
 
 const CSV_EXPORTS = {

@@ -89,6 +89,11 @@ export const seasons = sqliteTable(
       .references(() => teams.id, { onDelete: 'cascade' }),
     term: text('term', { enum: SEASON_TERM }).notNull(),
     year: integer('year').notNull(),
+    // What the treasurer calls this season, when "Fall 2026" is not it — a club
+    // that bills annually wants "2026-2027 Season" on the statement. Display
+    // only: term and year stay the identity, so rollover and the one-season-
+    // per-term rule are untouched.
+    name: text('name'),
     startDate: text('start_date'),
     endDate: text('end_date'),
     status: text('status', { enum: SEASON_STATUS }).notNull().default('active'),

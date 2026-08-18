@@ -38,6 +38,7 @@ export type Season = {
   teamId: number;
   term: 'fall' | 'spring' | 'summer' | 'winter';
   year: number;
+  name: string | null;
   startDate: string | null;
   endDate: string | null;
   status: 'active' | 'closed';
@@ -256,5 +257,10 @@ export const parseMoney = (input: string): number | null => {
   return Number.isFinite(value) ? Math.round(value * 100) * (negative ? -1 : 1) : null;
 };
 
+// A season is keyed by term and year, but that is not always what it is called
+// — a club billing annually wants "2026-2027 Season". The name wins wherever a
+// season is shown; the server does the same for PDF and CSV exports.
 export const seasonLabel = (s: Season) =>
-  `${s.term.charAt(0).toUpperCase()}${s.term.slice(1)} ${s.year}`;
+  s.name?.trim()
+    ? s.name.trim()
+    : `${s.term.charAt(0).toUpperCase()}${s.term.slice(1)} ${s.year}`;

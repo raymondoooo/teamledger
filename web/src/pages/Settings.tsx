@@ -302,6 +302,50 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
 // who took on a second team, or who wanted next season without closing this
 // one, had nowhere to go. Rollover is not that: it closes the current season on
 // purpose.
+// Renaming the current season. A club that bills for the whole year does not
+// think in "Fall 2026", and the label shows up on every statement a parent
+// receives, so it needs to be theirs. Term and year stay underneath as the key.
+function RenameSeason({ ctx }: { ctx: SeasonContext }) {
+  const fallback = `${ctx.season.term.charAt(0).toUpperCase()}${ctx.season.term.slice(1)} ${ctx.season.year}`;
+  const [name, setName] = useState(ctx.season.name ?? '');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const save = () => {
+    setBusy(true);
+    setErr(null);
+    api
+      .patch(`/seasons/${ctx.season.id}`, { name: name.trim() || null })
+      .then(() => ctx.reload())
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      {err && <div className="error">{err}</div>}
+      <div className="form-row">
+        <div className="field" style={{ flex: 1, maxWidth: 320 }}>
+          <label htmlFor="seasonName">Name this season</label>
+          <input
+            id="seasonName"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={fallback}
+          />
+        </div>
+        <button onClick={save} disabled={busy} style={{ alignSelf: 'end', marginBottom: 2 }}>
+          {busy ? 'Saving…' : 'Rename'}
+        </button>
+      </div>
+      <p className="notice" style={{ marginTop: 0 }}>
+        Shown everywhere instead of <strong>{fallback}</strong> — the season picker, exports and
+        the statements you send parents. Leave it blank to go back to {fallback}.
+      </p>
+    </div>
+  );
+}
+
 function TeamsAndSeasons({ ctx }: { ctx: SeasonContext }) {
   const byTeam = ctx.teams
     .map((t) => ({ team: t, list: ctx.seasons.filter((s) => s.teamId === t.id) }))
@@ -363,6 +407,7 @@ function TeamsAndSeasons({ ctx }: { ctx: SeasonContext }) {
           ))}
         </tbody>
       </table>
+      <RenameSeason ctx={ctx} />
     </AddSection>
   );
 }
