@@ -649,9 +649,11 @@ jobs:
           # evicting each other's layers every run.
           cache-from: type=gha,scope=${{ matrix.slug }}
           cache-to: type=gha,mode=max,scope=${{ matrix.slug }}
-          outputs: |
-            type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/teamledger,push-by-digest=true,name-canonical=true,push=true
-            type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+          # One registry only. build-push-action reports a single digest even
+          # when pushing to two, so the second registry's digest is unknowable
+          # here and the merge job cannot address it. GHCR is the staging
+          # registry; the release job copies the finished image to Docker Hub.
+          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
 
       # The digest goes *inside* the file, not in its name: upload-artifact
       # rejects a colon in a filename (it would be illegal on NTFS), and every
@@ -711,28 +713,36 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
 
-      - name: Create the manifest lists
+      - name: Assemble the multi-arch image, then copy it to Docker Hub
         run: |
           set -e
+          GHCR="ghcr.io/${{ github.repository }}"
+          HUB="${{ secrets.DOCKERHUB_USERNAME }}/teamledger"
+
           digests=""
           for f in /tmp/digests/*; do
-            digests="$digests $(cat "$f")"
+            digests="$digests $GHCR@$(cat "$f")"
           done
-          echo "digests:$digests"
+          echo "per-architecture digests:$digests"
 
-          for repo in "${{ secrets.DOCKERHUB_USERNAME }}/teamledger" "ghcr.io/${{ github.repository }}"; do
-            refs=""
-            for d in $digests; do refs="$refs $repo@$d"; done
-            tags=""
-            for t in $(echo '${{ steps.meta.outputs.tags }}'); do
-              case "$t" in
-                "$repo":*) tags="$tags -t $t" ;;
-              esac
-            done
-            [ -n "$tags" ] || { echo "no tags for $repo"; exit 1; }
-            echo "tagging $repo:$tags"
-            docker buildx imagetools create $tags $refs
+          # One manifest list in GHCR carrying every tag for that registry.
+          ghcr_tags=""
+          hub_tags=""
+          for t in $(echo '${{ steps.meta.outputs.tags }}'); do
+            case "$t" in
+              ghcr.io/*) ghcr_tags="$ghcr_tags -t $t" ;;
+              *)         hub_tags="$hub_tags -t $t" ;;
+            esac
           done
+          [ -n "$ghcr_tags" ] && [ -n "$hub_tags" ] || { echo "missing tags"; exit 1; }
+
+          docker buildx imagetools create $ghcr_tags $digests
+
+          # Promote the finished index to Docker Hub. imagetools copies the
+          # blobs across, so both registries end up with the same image rather
+          # than two separately-built ones.
+          primary=$(echo '${{ steps.meta.outputs.tags }}' | tr ' ' '\n' | grep '^ghcr.io/' | head -1)
+          docker buildx imagetools create $hub_tags "$primary"
 
       - name: Show what was published
         run: |
