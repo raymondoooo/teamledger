@@ -21,6 +21,8 @@ export const api = {
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
+  put: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
 
@@ -47,6 +49,16 @@ export type Season = {
   finalPaymentDue: string | null;
 };
 
+// One row of the season's payment plan. amountCents null means "an even share
+// of whatever the fixed instalments leave behind".
+export type Installment = {
+  id: number;
+  seq: number;
+  label: string | null;
+  amountCents: number | null;
+  dueDate: string | null;
+};
+
 export type BudgetLine = {
   id: number;
   label: string;
@@ -71,8 +83,14 @@ export type PlayerBalance = {
   hasOverride: boolean;
   paidCents: number;
   balanceCents: number;
-  firstPaymentDueCents: number;
-  finalPaymentDueCents: number;
+  installments: {
+    id: number;
+    seq: number;
+    label: string | null;
+    dueDate: string | null;
+    amountCents: number;
+    paid: boolean;
+  }[];
   payments: {
     id: number;
     paidAt: string;
@@ -82,8 +100,6 @@ export type PlayerBalance = {
     note: string | null;
     transferredOn: string | null;
   }[];
-  firstPaid: boolean;
-  finalPaid: boolean;
 };
 
 export type SeasonBudget = {

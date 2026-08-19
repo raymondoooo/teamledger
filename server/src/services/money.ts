@@ -15,6 +15,50 @@ export function splitEvenly(totalCents: number, ways: number): number[] {
   return Array.from({ length: ways }, (_, i) => sign * (base + (i < remainder ? 1 : 0)));
 }
 
+// Spreads one player's dues across the season's instalments.
+//
+// An instalment with a fixed amount is honoured first, in order, and capped by
+// what is still unpaid — so pinning "$150 deposit" works even for a player on a
+// $100 scholarship rate, who simply owes $100 and nothing after. Whatever those
+// leave behind is split evenly across the instalments that have no fixed
+// amount, using splitEvenly so the parts still sum to the dues exactly.
+//
+// If every instalment is pinned and they do not add up to the dues, the last
+// one absorbs the difference: money a player owes has to appear somewhere, and
+// silently dropping it is how a ledger stops reconciling.
+export function allocateInstalments(
+  duesCents: number,
+  amounts: (number | null)[],
+): number[] {
+  if (amounts.length === 0) return [];
+
+  const out = new Array<number>(amounts.length).fill(0);
+  const flexible: number[] = [];
+  let left = duesCents;
+
+  amounts.forEach((amount, i) => {
+    if (amount === null) {
+      flexible.push(i);
+      return;
+    }
+    // Never allocate more than remains, and never a negative instalment.
+    const take = Math.max(0, Math.min(amount, Math.max(0, left)));
+    out[i] = take;
+    left -= take;
+  });
+
+  if (flexible.length > 0) {
+    const shares = splitEvenly(left, flexible.length);
+    flexible.forEach((i, k) => {
+      out[i] = shares[k];
+    });
+  } else if (left !== 0) {
+    out[out.length - 1] += left;
+  }
+
+  return out;
+}
+
 // The per-player figure to *display* when quoting one number for the whole
 // team ("dues are $271.67"). Rounded up so the quoted price never collects
 // less than the team actually needs.

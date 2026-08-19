@@ -62,17 +62,27 @@ function coversList(budget: SeasonBudget): string {
   return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 }
 
+// The plan as a player on the standard rate experiences it. Preferring someone
+// without an override keeps the quoted figures the ones most of the team will
+// recognise on their own statement.
+function planFor(budget: SeasonBudget) {
+  const standard = budget.playerBalances.find((p) => !p.hasOverride) ?? budget.playerBalances[0];
+  return standard?.installments ?? [];
+}
+
 function compose(kind: Kind, team: Team, season: Season, budget: SeasonBudget): string {
   const label = seasonLabel(season);
   const total = fmt(budget.quotedPerPlayerCents);
   const handle = (team.venmoHandle ?? '').trim() || '@your-venmo';
   const note = `Venmo ${handle} — please put your player's name in the note so I can match it up.`;
 
-  const firstDue = prettyDate(season.firstPaymentDue);
-  const finalDue = prettyDate(season.finalPaymentDue);
-  const firstAmount = season.firstPaymentCents ?? 0;
-  const split = firstAmount > 0 && firstAmount < budget.quotedPerPlayerCents;
-  const remainder = fmt(Math.max(0, budget.quotedPerPlayerCents - firstAmount));
+  // The plan, with the amounts a player on the standard rate pays. Someone on
+  // an override owes different figures, which is exactly why the message says
+  // "unless we have agreed something different" rather than naming names.
+  const plan = planFor(budget);
+  const split = plan.length > 1;
+  const firstDue = prettyDate(plan[0]?.dueDate);
+  const finalDue = prettyDate(plan[plan.length - 1]?.dueDate);
 
   // Credits and fundraising can cover the whole season, which makes the
   // per-player figure zero or negative. "Each player owes -$33.33" is not a
@@ -98,9 +108,12 @@ function compose(kind: Kind, team: Team, season: Season, budget: SeasonBudget): 
         '',
       );
       if (split) {
-        lines.push('You can split it in two:');
-        lines.push(`• ${fmt(firstAmount)}${firstDue ? ` by ${firstDue}` : ''}`);
-        lines.push(`• ${remainder}${finalDue ? ` by ${finalDue}` : ' after that'}`);
+        lines.push(`You can split it across ${plan.length} payments:`);
+        for (const part of plan) {
+          const when = prettyDate(part.dueDate);
+          const name = part.label?.trim();
+          lines.push(`• ${fmt(part.amountCents)}${when ? ` by ${when}` : ''}${name ? ` (${name})` : ''}`);
+        }
       } else {
         lines.push(`Due${finalDue ? ` by ${finalDue}` : ' as soon as you can'}.`);
       }
@@ -114,7 +127,7 @@ function compose(kind: Kind, team: Team, season: Season, budget: SeasonBudget): 
       // final date rather than citing a deadline that means nothing.
       return [
         split
-          ? `Quick reminder: the first ${label} payment of ${fmt(firstAmount)} is due${firstDue ? ` ${firstDue}` : ' shortly'}.`
+          ? `Quick reminder: the first ${label} payment of ${fmt(plan[0].amountCents)} is due${firstDue ? ` ${firstDue}` : ' shortly'}.`
           : `Quick reminder: ${label} dues of ${total} are due${finalDue ? ` ${finalDue}` : ' shortly'}.`,
         '',
         note,
@@ -124,7 +137,7 @@ function compose(kind: Kind, team: Team, season: Season, budget: SeasonBudget): 
 
     case 'final':
       return [
-        `Heads up — the final ${label} payment of ${split ? remainder : total} is due${finalDue ? ` ${finalDue}` : ' shortly'}, about a week out.`,
+        `Heads up — the last ${label} payment of ${fmt(plan[plan.length - 1]?.amountCents ?? budget.quotedPerPlayerCents)} is due${finalDue ? ` ${finalDue}` : ' shortly'}.`,
         '',
         note,
         '',
@@ -155,9 +168,7 @@ export default function TeamMessage({
 }) {
   // A season with no instalment plan has no first payment to remind anyone
   // about, so that option is not offered at all.
-  const hasSplit =
-    (season.firstPaymentCents ?? 0) > 0 &&
-    (season.firstPaymentCents ?? 0) < budget.quotedPerPlayerCents;
+  const hasSplit = planFor(budget).length > 1;
   const nothingDue = budget.quotedPerPlayerCents <= 0;
   const kinds = nothingDue
     ? (['announce'] as Kind[])

@@ -5,6 +5,7 @@ import {
   fmt,
   parseMoney,
   seasonLabel,
+  type Installment,
   type CostRule,
   type Feed,
   type Tournament,
@@ -18,6 +19,7 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
   const [rules, setRules] = useState<CostRule[]>([]);
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [tourneys, setTourneys] = useState<Tournament[]>([]);
+  const [planCount, setPlanCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -26,12 +28,14 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
       api.get<CostRule[]>(`/seasons/${ctx.season.id}/cost-rules`),
       api.get<Feed[]>(`/seasons/${ctx.season.id}/feeds`),
       api.get<Tournament[]>(`/seasons/${ctx.season.id}/tournaments`),
+      api.get<Installment[]>(`/seasons/${ctx.season.id}/installments`),
     ])
-      .then(([t, r, f, tn]) => {
+      .then(([t, r, f, tn, plan]) => {
         setTrainers(t);
         setRules(r);
         setFeeds(f);
         setTourneys(tn);
+        setPlanCount(plan.length);
       })
       .catch((err: Error) => setError(err.message));
   }, [ctx.team.id, ctx.season.id]);
@@ -271,8 +275,8 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
       <Collapsible
         title="Payment plan"
         hint={
-          ctx.season.firstPaymentCents !== null ? (
-            <span className="muted">— {fmt(ctx.season.firstPaymentCents)} first payment</span>
+          planCount > 1 ? (
+            <span className="muted">— {planCount} payments</span>
           ) : (
             <span className="muted">— all due at once</span>
           )
@@ -825,49 +829,133 @@ function AddFeed({ seasonId, onAdded }: { seasonId: number; onAdded: () => void 
 }
 
 function PaymentPlan({ ctx }: { ctx: SeasonContext }) {
-  const [first, setFirst] = useState(
-    ctx.season.firstPaymentCents !== null ? (ctx.season.firstPaymentCents / 100).toFixed(2) : '',
-  );
-  const [firstDue, setFirstDue] = useState(ctx.season.firstPaymentDue ?? '');
-  const [finalDue, setFinalDue] = useState(ctx.season.finalPaymentDue ?? '');
+  const [rows, setRows] = useState<Installment[]>([]);
   const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    api
+      .get<Installment[]>(`/seasons/${ctx.season.id}/installments`)
+      .then(setRows)
+      .catch((e: Error) => setStatus(e.message));
+  }, [ctx.season.id]);
+  useEffect(load, [load]);
+
+  const setCount = (n: number) => {
+    setRows((cur) => {
+      const next = cur.slice(0, n);
+      while (next.length < n) {
+        next.push({ id: -next.length - 1, seq: next.length + 1, label: null, amountCents: null, dueDate: null });
+      }
+      return next.map((r, i) => ({ ...r, seq: i + 1 }));
+    });
+  };
+
+  const edit = (i: number, patch: Partial<Installment>) =>
+    setRows((cur) => cur.map((r, k) => (k === i ? { ...r, ...patch } : r)));
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
+    setBusy(true);
+    setStatus(null);
     api
-      .patch(`/seasons/${ctx.season.id}`, {
-        firstPaymentCents: first.trim() === '' ? null : parseMoney(first),
-        firstPaymentDue: firstDue || null,
-        finalPaymentDue: finalDue || null,
+      .put(`/seasons/${ctx.season.id}/installments`, {
+        installments: rows.map((r) => ({
+          label: r.label?.trim() || null,
+          amountCents: r.amountCents,
+          dueDate: r.dueDate || null,
+        })),
       })
       .then(() => {
         setStatus('Saved.');
+        load();
         ctx.reload();
       })
-      .catch((err: Error) => setStatus(err.message));
+      .catch((err: Error) => setStatus(err.message))
+      .finally(() => setBusy(false));
   };
+
+  const pinned = rows.filter((r) => r.amountCents !== null).length;
 
   return (
     <form onSubmit={save}>
       <p className="notice" style={{ marginTop: 0 }}>
-        Splits each player's dues into a first payment and a remainder. Leave blank if everything
-        is due at once.
+        How many payments the season is collected in. Leave an amount blank and it takes an even
+        share of whatever the fixed ones leave — so a plan of all-blank rows simply splits the
+        dues evenly. Every player gets their own figures, so an override or a carried balance
+        still comes out right.
       </p>
-      <div className="form-row">
-        <div className="field" style={{ width: 120 }}>
-          <label>First payment</label>
-          <input value={first} onChange={(e) => setFirst(e.target.value)} placeholder="150.00" />
+
+      <div className="form-row" style={{ marginBottom: 10 }}>
+        <div className="field" style={{ width: 150 }}>
+          <label htmlFor="count">Number of payments</label>
+          <select id="count" value={rows.length} onChange={(e) => setCount(Number(e.target.value))}>
+            {[0, 1, 2, 3, 4, 5, 6, 8, 10, 12].map((n) => (
+              <option key={n} value={n}>
+                {n === 0 ? 'All at once' : n}
+              </option>
+            ))}
+          </select>
         </div>
-        <div className="field">
-          <label>First due</label>
-          <input type="date" value={firstDue} onChange={(e) => setFirstDue(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Final due</label>
-          <input type="date" value={finalDue} onChange={(e) => setFinalDue(e.target.value)} />
-        </div>
-        <button className="primary" type="submit">Save</button>
-        {status && <span className="notice">{status}</span>}
+      </div>
+
+      {rows.length > 0 && (
+        <table>
+          <thead>
+            <tr>
+              <th style={{ width: 40 }}>#</th>
+              <th>Name (optional)</th>
+              <th style={{ width: 130 }}>Amount</th>
+              <th style={{ width: 170 }}>Due</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={r.id}>
+                <td>{i + 1}</td>
+                <td>
+                  <input
+                    value={r.label ?? ''}
+                    onChange={(e) => edit(i, { label: e.target.value })}
+                    placeholder={i === 0 ? 'Deposit' : `Payment ${i + 1}`}
+                  />
+                </td>
+                <td>
+                  <input
+                    value={r.amountCents === null ? '' : (r.amountCents / 100).toFixed(2)}
+                    onChange={(e) =>
+                      edit(i, {
+                        amountCents: e.target.value.trim() === '' ? null : parseMoney(e.target.value),
+                      })
+                    }
+                    placeholder="even share"
+                  />
+                </td>
+                <td>
+                  <input
+                    type="date"
+                    value={r.dueDate ?? ''}
+                    onChange={(e) => edit(i, { dueDate: e.target.value })}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {rows.length > 0 && pinned === rows.length && (
+        <p className="notice">
+          Every amount is fixed, so nothing is left to split — the last payment absorbs any
+          difference between these figures and what a player actually owes.
+        </p>
+      )}
+
+      <div className="section-head" style={{ margin: '10px 0 0' }}>
+        <button className="primary" type="submit" disabled={busy}>
+          {busy ? 'Saving…' : 'Save plan'}
+        </button>
+        {status && <span className="muted">{status}</span>}
       </div>
     </form>
   );

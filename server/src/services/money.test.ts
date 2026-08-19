@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { formatCents, parseMoneyToCents, quotedShareCents, splitEvenly } from './money.js';
+import {
+  allocateInstalments,
+  formatCents,
+  parseMoneyToCents,
+  quotedShareCents,
+  splitEvenly,
+} from './money.js';
 
 describe('splitEvenly', () => {
   it('splits a season total without losing or inventing a cent', () => {
@@ -79,5 +85,51 @@ describe('formatCents', () => {
   it('pads the cents rather than truncating them', () => {
     expect(formatCents(1005)).toBe('$10.05');
     expect(formatCents(1000)).toBe('$10.00');
+  });
+});
+
+describe('allocateInstalments', () => {
+  it('splits evenly when nothing is pinned, to the exact cent', () => {
+    const parts = allocateInstalments(60834, [null, null, null, null]);
+    expect(parts).toEqual([15209, 15209, 15208, 15208]);
+    expect(parts.reduce((a, b) => a + b, 0)).toBe(60834);
+  });
+
+  it('honours pinned amounts and splits the remainder across the rest', () => {
+    const parts = allocateInstalments(60834, [15000, null, null, null]);
+    expect(parts).toEqual([15000, 15278, 15278, 15278]);
+    expect(parts.reduce((a, b) => a + b, 0)).toBe(60834);
+  });
+
+  it('handles two pinned instalments', () => {
+    const parts = allocateInstalments(60834, [20000, 20000, null, null]);
+    expect(parts).toEqual([20000, 20000, 10417, 10417]);
+    expect(parts.reduce((a, b) => a + b, 0)).toBe(60834);
+  });
+
+  // A scholarship player owes less than the deposit everyone else pays.
+  it('caps a pinned instalment at what the player actually owes', () => {
+    const parts = allocateInstalments(10000, [15000, null, null]);
+    expect(parts).toEqual([10000, 0, 0]);
+    expect(parts.reduce((a, b) => a + b, 0)).toBe(10000);
+  });
+
+  it('gives the last instalment the difference when every one is pinned', () => {
+    const parts = allocateInstalments(60834, [20000, 20000, 20000]);
+    expect(parts.reduce((a, b) => a + b, 0)).toBe(60834);
+    expect(parts[2]).toBe(20834);
+  });
+
+  it('never leaves a player owing more or less than their dues', () => {
+    for (const dues of [0, 1, 99, 60834, 100000]) {
+      for (const plan of [[null], [null, null], [15000, null, null], [5000, 5000]]) {
+        const parts = allocateInstalments(dues, plan as (number | null)[]);
+        expect(parts.reduce((a, b) => a + b, 0)).toBe(dues);
+      }
+    }
+  });
+
+  it('is empty for a season with no instalments', () => {
+    expect(allocateInstalments(60834, [])).toEqual([]);
   });
 });

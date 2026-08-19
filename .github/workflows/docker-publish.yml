@@ -189,8 +189,9 @@ jobs:
           shares = sum(p['shareCents'] for p in b['playerBalances'])
           assert shares == b['netDueCents'], f"shares {shares} != net {b['netDueCents']}"
           p = b['playerBalances'][0]
-          assert p['firstPaymentDueCents'] == 15000
-          assert p['finalPaymentDueCents'] == p['duesCents'] - 15000
+          # Default plan for a new season is a single instalment: everything.
+          parts = p['installments']
+          assert sum(i['amountCents'] for i in parts) in (0, p['duesCents']), parts
           print("budget math OK:", b['quotedPerPlayerCents'], "per player, shares sum exactly")
           PY
 
@@ -229,6 +230,37 @@ jobs:
           check /seasons/1/trainer-ledger
           [ "$fail" = "0" ] || { echo "one or more screens would be broken"; exit 1; }
           echo "every read endpoint answers 200"
+
+      - name: A multi-payment plan must split to the exact cent
+        run: |
+          set -e
+          B=http://localhost:3212/api
+          # Four payments, the first pinned. Every player's parts must still sum
+          # to their dues -- that is the invariant the whole ledger rests on.
+          curl -fsS -b /tmp/j -X PUT "$B/seasons/1/installments" \
+            -H 'Content-Type: application/json' \
+            -d '{"installments":[{"label":"Deposit","amountCents":15000},{},{},{}]}' >/dev/null
+          curl -fsS -b /tmp/j "$B/seasons/1/budget" > /tmp/plan.json
+          python3 - <<'PY'
+          import json
+          b = json.load(open('/tmp/plan.json'))
+          for p in b['playerBalances']:
+              parts = p['installments']
+              assert len(parts) == 4, parts
+              total = sum(i['amountCents'] for i in parts)
+              assert total == p['duesCents'], (p['name'], total, p['duesCents'])
+              assert parts[0]['amountCents'] == min(15000, p['duesCents'])
+          print("4-payment plan sums exactly for every player")
+          PY
+
+          # An instalment carrying a payment cannot be deleted out from under it.
+          id1=$(curl -fsS -b /tmp/j "$B/seasons/1/installments" | python3 -c 'import json,sys;print(json.load(sys.stdin)[3]["id"])')
+          curl -fsS -b /tmp/j -X POST "$B/seasons/1/installment" -H 'Content-Type: application/json' \
+            -d "{\"playerId\":1,\"installmentId\":$id1,\"paid\":true}" >/dev/null
+          code=$(curl -s -o /dev/null -w '%{http_code}' -b /tmp/j -X PUT "$B/seasons/1/installments" \
+            -H 'Content-Type: application/json' -d '{"installments":[{},{}]}')
+          [ "$code" != "200" ] || { echo "FAIL: dropped an instalment that had a payment"; exit 1; }
+          echo "refuses to delete a paid instalment"
 
       - name: Exports must generate
         run: |

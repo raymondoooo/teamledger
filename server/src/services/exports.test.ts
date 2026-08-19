@@ -37,8 +37,10 @@ function player(name: string, i: number): PlayerBalance {
     hasOverride: false,
     paidCents: 15000,
     balanceCents: 12167,
-    firstPaymentDueCents: 15000,
-    finalPaymentDueCents: 12167,
+    installments: [
+      { id: 1, seq: 1, label: 'Deposit', dueDate: '2026-09-30', amountCents: 15000, paid: true },
+      { id: 2, seq: 2, label: null, dueDate: '2026-11-15', amountCents: 12167, paid: false },
+    ],
     payments: [
       { id: i + 1, paidAt: '2026-02-15', amountCents: 15000, method: 'venmo', installment: 'first', note: null, transferredOn: null },
     ],

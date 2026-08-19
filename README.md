@@ -173,7 +173,10 @@ hand to next season's treasurer.
   for stragglers. Editable before you copy it.
 - A payment ledger — every payment is a dated row with a method and a note, not a
   Yes/No checkbox, so the books survive a handover.
-- Tick-box first and final instalments straight from the roster.
+- **A payment plan of any length** — two instalments, or four across the year.
+  Amounts left blank take an even share, so pinning a deposit re-splits the
+  rest; every player gets their own figures, so an override or a carried
+  balance still comes out right. Tick them off from the roster.
 - **Per-player fundraising**: what a player raised themselves comes off their own
   bill, not the whole team's.
 - Per-player dues overrides for scholarships, sibling discounts or late joiners.
@@ -202,6 +205,8 @@ hand to next season's treasurer.
 - A primary trainer is attached to new events automatically.
 
 **Everything else**
+- **Name a season** whatever you call it — "2026-2027 Season" instead of
+  "Fall 2026" — and it follows through to exports and parent statements.
 - **Season rollover** — close a season and open the next with the same roster.
   Overpayments follow the player as a credit; leftover team funds arrive as a
   credit line.

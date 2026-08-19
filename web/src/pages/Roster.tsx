@@ -64,10 +64,10 @@ export default function Roster({ ctx }: { ctx: SeasonContext }) {
     return copy;
   }, [budget, sort]);
 
-  const setInstallment = (playerId: number, which: 'first' | 'final', paid: boolean) => {
+  const setInstallment = (playerId: number, installmentId: number, paid: boolean) => {
     setBusyRow(playerId);
     api
-      .post(`/seasons/${ctx.season.id}/installment`, { playerId, which, paid })
+      .post(`/seasons/${ctx.season.id}/installment`, { playerId, installmentId, paid })
       .then(load)
       .catch((err: Error) => setError(err.message))
       .finally(() => setBusyRow(null));
@@ -86,7 +86,10 @@ export default function Roster({ ctx }: { ctx: SeasonContext }) {
   if (error) return <div className="error">{error}</div>;
   if (!budget) return <p className="muted">Loading…</p>;
 
-  const hasPlan = ctx.season.firstPaymentCents !== null;
+  // The plan lives on the season now, so read it off any roster line — every
+  // player carries the same instalments, just with their own amounts.
+  const planLength = budget?.playerBalances[0]?.installments.length ?? 0;
+  const hasPlan = planLength > 1;
 
   return (
     <>
@@ -121,15 +124,14 @@ export default function Roster({ ctx }: { ctx: SeasonContext }) {
                   </span>
                 </th>
               ))}
-              {hasPlan && <th title="Tick when the first payment arrives">1st</th>}
-              {hasPlan && <th title="Tick when the final payment arrives">2nd</th>}
+              {hasPlan && <th title="Payments recorded, out of the season's plan">Paid</th>}
               <th />
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={hasPlan ? 11 : 9} className="muted">No players yet.</td>
+                <td colSpan={hasPlan ? 10 : 9} className="muted">No players yet.</td>
               </tr>
             )}
             {rows.map((p) => (
@@ -154,15 +156,6 @@ export default function Roster({ ctx }: { ctx: SeasonContext }) {
                 {hasPlan && (
                   <InstallmentCell
                     player={p}
-                    which="first"
-                    busy={busyRow === p.playerId}
-                    onToggle={setInstallment}
-                  />
-                )}
-                {hasPlan && (
-                  <InstallmentCell
-                    player={p}
-                    which="final"
                     busy={busyRow === p.playerId}
                     onToggle={setInstallment}
                   />
@@ -181,7 +174,7 @@ export default function Roster({ ctx }: { ctx: SeasonContext }) {
               <td className="num">{fmt(budget.netDueCents)}</td>
               <td className="num hide-sm">{fmt(budget.totalCollectedCents)}</td>
               <td className="num">{fmt(budget.netDueCents - budget.totalCollectedCents)}</td>
-              {hasPlan && <td colSpan={2} />}
+              {hasPlan && <td />}
               <td className="hide-sm" />
             </tr>
           </tbody>
@@ -197,27 +190,51 @@ export default function Roster({ ctx }: { ctx: SeasonContext }) {
   );
 }
 
+// Four tick boxes across a roster row is unreadable on a phone, so the cell
+// shows progress ("2 of 4") and opens the individual instalments on demand.
 function InstallmentCell({
   player,
-  which,
   busy,
   onToggle,
 }: {
   player: PlayerBalance;
-  which: 'first' | 'final';
   busy: boolean;
-  onToggle: (playerId: number, which: 'first' | 'final', paid: boolean) => void;
+  onToggle: (playerId: number, installmentId: number, paid: boolean) => void;
 }) {
-  const checked = which === 'first' ? player.firstPaid : player.finalPaid;
-  const amount = which === 'first' ? player.firstPaymentDueCents : player.finalPaymentDueCents;
+  const [open, setOpen] = useState(false);
+  const plan = player.installments;
+  const done = plan.filter((i) => i.paid).length;
+  const all = done === plan.length && plan.length > 0;
+
   return (
-    <td title={`${fmt(amount)}`}>
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={busy}
-        onChange={(e) => onToggle(player.playerId, which, e.target.checked)}
-      />
+    <td>
+      <button
+        className="link"
+        onClick={() => setOpen((o) => !o)}
+        title="Show this player's payment plan"
+        style={all ? { color: 'var(--ok, #3fa66a)' } : undefined}
+      >
+        {done} of {plan.length}
+      </button>
+      {open && (
+        <div className="panel" style={{ padding: 8, marginTop: 6, minWidth: 190 }}>
+          {plan.map((i) => (
+            <label
+              key={i.id}
+              style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 0' }}
+            >
+              <input
+                type="checkbox"
+                checked={i.paid}
+                disabled={busy || i.amountCents <= 0}
+                onChange={(e) => onToggle(player.playerId, i.id, e.target.checked)}
+              />
+              <span style={{ flex: 1 }}>{i.label?.trim() || `Payment ${i.seq}`}</span>
+              <span className="num muted">{fmt(i.amountCents)}</span>
+            </label>
+          ))}
+        </div>
+      )}
     </td>
   );
 }

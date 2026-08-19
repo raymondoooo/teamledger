@@ -9,12 +9,13 @@ import {
   payments,
   playerCredits,
   players,
+  seasonInstallments,
   seasonPlayers,
   seasons,
   tournaments,
   trainers,
 } from '../db/schema.js';
-import { quotedShareCents, splitEvenly } from './money.js';
+import { allocateInstalments, quotedShareCents, splitEvenly } from './money.js';
 
 // This module is the only place the spreadsheet's arithmetic lives. Screens,
 // exports and the rollover all read from computeSeasonBudget — nothing
@@ -58,8 +59,17 @@ export type PlayerBalance = {
   paidCents: number;
   // Positive = still owes. Negative = overpaid and is owed a refund/credit.
   balanceCents: number;
-  firstPaymentDueCents: number;
-  finalPaymentDueCents: number;
+  // This player's share of each instalment, in plan order. Amounts are their
+  // own — a player on an override or carrying a balance owes different figures
+  // to everyone else against the same plan.
+  installments: {
+    id: number;
+    seq: number;
+    label: string | null;
+    dueDate: string | null;
+    amountCents: number;
+    paid: boolean;
+  }[];
   payments: {
     id: number;
     paidAt: string;
@@ -69,9 +79,6 @@ export type PlayerBalance = {
     note: string | null;
     transferredOn: string | null;
   }[];
-  // Whether each instalment has been recorded, for the roster tick boxes.
-  firstPaid: boolean;
-  finalPaid: boolean;
 };
 
 export type SeasonBudget = {
@@ -328,6 +335,11 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
     .orderBy(players.name);
 
   const paymentRows = await db.select().from(payments).where(eq(payments.seasonId, seasonId));
+  // The payment plan, in order. No rows at all means the whole amount in one
+  // go, which is what a season with no plan has always meant.
+  const planRows = (
+    await db.select().from(seasonInstallments).where(eq(seasonInstallments.seasonId, seasonId))
+  ).sort((a, b) => a.seq - b.seq);
   const playerCreditRows = await db
     .select()
     .from(playerCredits)
@@ -400,7 +412,11 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
       .sort((a, b) => a.paidAt.localeCompare(b.paidAt));
     const paidCents = mine.reduce((s, p) => s + p.amountCents, 0);
 
-    const firstPaymentDueCents = Math.min(season.firstPaymentCents ?? duesCents, duesCents);
+    const parts = allocateInstalments(
+      duesCents,
+      planRows.map((i) => i.amountCents),
+    );
+    const settled = new Set(mine.map((p) => p.installmentId).filter((id): id is number => id !== null));
 
     return {
       playerId: r.playerId,
@@ -422,8 +438,14 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
       hasOverride: r.duesOverrideCents !== null,
       paidCents,
       balanceCents: duesCents - paidCents,
-      firstPaymentDueCents,
-      finalPaymentDueCents: duesCents - firstPaymentDueCents,
+      installments: planRows.map((row, i) => ({
+        id: row.id,
+        seq: row.seq,
+        label: row.label,
+        dueDate: row.dueDate,
+        amountCents: parts[i] ?? 0,
+        paid: settled.has(row.id),
+      })),
       payments: mine.map((p) => ({
         id: p.id,
         paidAt: p.paidAt,
@@ -433,8 +455,6 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
         note: p.note,
         transferredOn: p.transferredOn,
       })),
-      firstPaid: mine.some((p) => p.installment === 'first'),
-      finalPaid: mine.some((p) => p.installment === 'final'),
     };
   });
 
@@ -454,14 +474,14 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
   };
 }
 
-// Ticking "1st payment" on the roster records exactly that instalment, and
-// unticking removes it again. Keyed on payments.installment so the toggle never
-// has to guess which of a player's payment rows it meant — which it would get
-// wrong the moment someone paid in two parts.
+// Ticking an instalment on the roster records exactly that one, and unticking
+// removes it again. Keyed on the instalment row so the toggle never has to
+// guess which of a player's payment rows it meant — which it would get wrong
+// the moment someone paid in two parts.
 export async function setInstallmentPaid(input: {
   seasonId: number;
   playerId: number;
-  which: 'first' | 'final';
+  installmentId: number;
   paid: boolean;
   paidAt?: string;
 }): Promise<{ ok: true }> {
@@ -472,7 +492,7 @@ export async function setInstallmentPaid(input: {
       and(
         eq(payments.seasonId, input.seasonId),
         eq(payments.playerId, input.playerId),
-        eq(payments.installment, input.which),
+        eq(payments.installmentId, input.installmentId),
       ),
     );
 
@@ -490,9 +510,9 @@ export async function setInstallmentPaid(input: {
   const player = budget.playerBalances.find((p) => p.playerId === input.playerId);
   if (!player) throw new Error('player is not on this season roster');
 
-  const amountCents =
-    input.which === 'first' ? player.firstPaymentDueCents : player.finalPaymentDueCents;
-  if (amountCents <= 0) {
+  const row = player.installments.find((i) => i.id === input.installmentId);
+  if (!row) throw new Error('that instalment is not part of this season');
+  if (row.amountCents <= 0) {
     throw new Error(
       'that instalment is zero for this player — record the amount on their page instead',
     );
@@ -502,10 +522,13 @@ export async function setInstallmentPaid(input: {
     seasonId: input.seasonId,
     playerId: input.playerId,
     paidAt: input.paidAt ?? new Date().toISOString().slice(0, 10),
-    amountCents,
+    amountCents: row.amountCents,
     method: 'venmo',
-    installment: input.which,
-    note: input.which === 'first' ? '1st payment' : 'Final payment',
+    installmentId: row.id,
+    // The legacy enum still has a NOT NULL default; keep it meaningful for the
+    // first and last instalment so old exports and databases stay readable.
+    installment: row.seq === 1 ? 'first' : row.seq === player.installments.length ? 'final' : 'other',
+    note: row.label?.trim() ? row.label.trim() : `Payment ${row.seq}`,
   });
 
   return { ok: true };

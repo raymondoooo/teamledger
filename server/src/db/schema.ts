@@ -114,6 +114,30 @@ export const seasons = sqliteTable(
   ],
 );
 
+// The payment plan: one row per instalment, in `seq` order.
+//
+// Replaces the old two-column first/final arrangement, which could not express
+// "four payments across the year". `amountCents` null means "an even share of
+// whatever is left" — so the common case is a plan of all-null rows that splits
+// dues evenly, and pinning one or two to a fixed figure re-splits the remainder
+// across the rest. See allocateInstalments in services/budget.ts.
+export const seasonInstallments = sqliteTable(
+  'season_installments',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    seasonId: integer('season_id')
+      .notNull()
+      .references(() => seasons.id, { onDelete: 'cascade' }),
+    seq: integer('seq').notNull(),
+    label: text('label'),
+    // null = take an even share of what the pinned instalments leave behind.
+    amountCents: integer('amount_cents'),
+    dueDate: text('due_date'),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(now),
+  },
+  (t) => [uniqueIndex('season_installments_season_seq_idx').on(t.seasonId, t.seq)],
+);
+
 // A player belongs to the team, not the season — that is what makes rollover
 // possible without re-typing the roster every year.
 export const players = sqliteTable('players', {
@@ -393,6 +417,12 @@ export const payments = sqliteTable('payments', {
   paidAt: text('paid_at').notNull(),
   amountCents: integer('amount_cents').notNull(),
   method: text('method', { enum: PAYMENT_METHOD }).notNull().default('venmo'),
+  // Which instalment this payment settles. Superseded the `installment` enum
+  // below, which is kept only so databases written before the payment plan
+  // became a table still read correctly.
+  installmentId: integer('installment_id').references(() => seasonInstallments.id, {
+    onDelete: 'set null',
+  }),
   installment: text('installment', { enum: INSTALLMENT }).notNull().default('other'),
   note: text('note'),
   receiptPath: text('receipt_path'),

@@ -114,18 +114,17 @@ export default function PlayerDetail({ ctx }: { ctx: SeasonContext }) {
               <td>Total dues</td>
               <td className="num">{fmt(player.duesCents)}</td>
             </tr>
-            {ctx.season.firstPaymentCents !== null && (
-              <>
-                <tr>
-                  <td className="muted">First payment</td>
-                  <td className="num muted">{fmt(player.firstPaymentDueCents)}</td>
+            {player.installments.length > 1 &&
+              player.installments.map((i) => (
+                <tr key={i.id}>
+                  <td className="muted">
+                    {i.label?.trim() || `Payment ${i.seq}`}
+                    {i.dueDate ? ` — due ${i.dueDate}` : ''}
+                    {i.paid ? ' (paid)' : ''}
+                  </td>
+                  <td className="num muted">{fmt(i.amountCents)}</td>
                 </tr>
-                <tr>
-                  <td className="muted">Final payment</td>
-                  <td className="num muted">{fmt(player.finalPaymentDueCents)}</td>
-                </tr>
-              </>
-            )}
+              ))}
           </tbody>
         </table>
       </div>

@@ -24,6 +24,7 @@ import {
   payments,
   playerCredits,
   players,
+  seasonInstallments,
   seasonPlayers,
   seasons,
   teams,
@@ -1032,12 +1033,108 @@ api.post(
     const body = z
       .object({
         playerId: idParam,
-        which: z.enum(['first', 'final']),
+        installmentId: idParam,
         paid: z.boolean(),
         paidAt: z.string().optional(),
       })
       .parse(req.body);
     res.json(await setInstallmentPaid({ seasonId, ...body }));
+  }),
+);
+
+// --- payment plan ----------------------------------------------------------
+
+api.get(
+  '/seasons/:id/installments',
+  handle(async (req, res) => {
+    const seasonId = idParam.parse(req.params.id);
+    const rows = await db
+      .select()
+      .from(seasonInstallments)
+      .where(eq(seasonInstallments.seasonId, seasonId));
+    res.json(rows.sort((a, b) => a.seq - b.seq));
+  }),
+);
+
+// The whole plan is replaced in one call rather than patched row by row. The
+// rows are an ordered set — deleting the second of four renumbers the rest —
+// and a half-applied plan would misstate what every player owes.
+api.put(
+  '/seasons/:id/installments',
+  handle(async (req, res) => {
+    const seasonId = idParam.parse(req.params.id);
+    const body = z
+      .object({
+        installments: z
+          .array(
+            z.object({
+              label: z.string().nullish(),
+              // null means "an even share of what the fixed ones leave".
+              amountCents: money.nullish(),
+              dueDate: z.string().nullish(),
+            }),
+          )
+          .max(24),
+      })
+      .parse(req.body);
+
+    const existing = await db
+      .select()
+      .from(seasonInstallments)
+      .where(eq(seasonInstallments.seasonId, seasonId));
+
+    // Payments already recorded against an instalment must not be silently
+    // detached, so a row that someone has paid cannot be dropped.
+    const paidRows = await db
+      .select({ installmentId: payments.installmentId })
+      .from(payments)
+      .where(eq(payments.seasonId, seasonId));
+    const paidIds = new Set(
+      paidRows.map((p) => p.installmentId).filter((id): id is number => id !== null),
+    );
+    const keptCount = body.installments.length;
+    const wouldDrop = existing
+      .sort((a, b) => a.seq - b.seq)
+      .slice(keptCount)
+      .filter((row) => paidIds.has(row.id));
+    if (wouldDrop.length > 0) {
+      throw new Error(
+        'a payment has already been recorded against an instalment you are removing — ' +
+          'delete those payments first',
+      );
+    }
+
+    // Reuse rows by position so ids, and therefore recorded payments, survive
+    // an edit to the amounts or the dates.
+    const bySeq = new Map(existing.map((row) => [row.seq, row] as const));
+    for (const [i, item] of body.installments.entries()) {
+      const seq = i + 1;
+      const current = bySeq.get(seq);
+      const values = {
+        label: item.label ?? null,
+        amountCents: item.amountCents ?? null,
+        dueDate: item.dueDate ?? null,
+      };
+      if (current) {
+        await db
+          .update(seasonInstallments)
+          .set(values)
+          .where(eq(seasonInstallments.id, current.id));
+      } else {
+        await db.insert(seasonInstallments).values({ seasonId, seq, ...values });
+      }
+    }
+    for (const row of existing) {
+      if (row.seq > keptCount) {
+        await db.delete(seasonInstallments).where(eq(seasonInstallments.id, row.id));
+      }
+    }
+
+    const rows = await db
+      .select()
+      .from(seasonInstallments)
+      .where(eq(seasonInstallments.seasonId, seasonId));
+    res.json(rows.sort((a, b) => a.seq - b.seq));
   }),
 );
 

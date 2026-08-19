@@ -41,8 +41,10 @@ session secret is generated on first boot.
 Whoever opens that setup screen first claims the instance, so do it before
 putting teamledger anywhere the public can reach.
 
-The Budget page also drafts the post for your team's message board — dues, the
-instalment dates and your Venmo handle, worded and ready to copy.
+Dues can be collected in as many instalments as you like — two, or four across
+the year — with each player's share worked out to the cent. The Budget page also
+drafts the post for your team's message board, with those dates and amounts and
+your Venmo handle already in it.
 
 ## Tags
 

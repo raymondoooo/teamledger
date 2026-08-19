@@ -383,9 +383,10 @@ export async function budgetSheetPdf(budget: SeasonBudget, meta: PdfMeta): Promi
   // The instalment split, taken from a real roster line so it reflects whatever
   // the season is actually configured to do rather than being recomputed here.
   const sample = budget.playerBalances[0];
-  if (sample && sample.finalPaymentDueCents > 0) {
-    moneyRow(doc, 'First payment', formatCents(sample.firstPaymentDueCents));
-    moneyRow(doc, 'Final payment', formatCents(sample.finalPaymentDueCents));
+  for (const part of sample?.installments ?? []) {
+    if (part.amountCents <= 0) continue;
+    const due = part.dueDate ? ` (due ${part.dueDate})` : '';
+    moneyRow(doc, `${part.label?.trim() || `Payment ${part.seq}`}${due}`, formatCents(part.amountCents));
   }
 
   sectionHeader(doc, 'Collection');
@@ -463,15 +464,19 @@ export async function playerStatementPdf(
     { bold: true },
   );
 
-  if (owing && player.finalPaymentDueCents > 0) {
+  // The plan as it applies to this player — their own amounts, not the team's,
+  // since an override or a carried balance changes every figure.
+  const plan = (player.installments ?? []).filter((i) => i.amountCents > 0);
+  if (owing && plan.length > 1) {
     doc.moveDown(0.5);
     doc.font(FONT.regular).fontSize(9).fillColor('#444');
-    doc.text(
-      pdfText(
-        `Payment plan: ${formatCents(player.firstPaymentDueCents)} first payment, ` +
-          `${formatCents(player.finalPaymentDueCents)} final payment.`,
-      ),
-    );
+    const parts = plan.map((i) => {
+      const name = i.label?.trim() || `payment ${i.seq}`;
+      const when = i.dueDate ? ` by ${i.dueDate}` : '';
+      const done = i.paid ? ' — paid' : '';
+      return `${formatCents(i.amountCents)} ${name}${when}${done}`;
+    });
+    doc.text(pdfText(`Payment plan: ${parts.join('; ')}.`));
     doc.fillColor('#000');
   }
 
