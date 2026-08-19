@@ -174,7 +174,11 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
         </table>
       </AddSection>
 
-      {budget.segments && <SegmentSummary segments={budget.segments} />}
+      {budget.segments ? (
+        <SegmentSummary segments={budget.segments} />
+      ) : (
+        <SplitPrompt budget={budget} />
+      )}
 
       <Collapsible title="Message for the team" hint={<span className="muted">— ready to paste</span>}>
         <TeamMessage team={ctx.team} season={ctx.season} budget={budget} onTeamChange={ctx.reload} />
@@ -206,12 +210,7 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
             </tr>
           </tbody>
         </table>
-        {ctx.season.firstPaymentCents !== null && (
-          <p className="notice">
-            Payment plan: {fmt(ctx.season.firstPaymentCents)} first payment, remainder due
-            after. Set this on the Settings page.
-          </p>
-        )}
+        <PlanNote budget={budget} />
       </div>
     </>
   );
@@ -219,6 +218,62 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
 
 // Marking an expense paid writes the bank withdrawal. The date is editable
 // because the day a cost is incurred is rarely the day the money leaves.
+// The actual payment plan, in the words of the plan itself. This used to be a
+// fixed sentence about a first payment and a remainder, which stopped being
+// true the moment a season could have four instalments — and went on being
+// printed anyway, because it read a legacy column rather than the plan.
+// A season collected across most of a year is almost certainly two halves, and
+// the half-by-half check is the thing that tells you whether the autumn pays
+// for itself. It is switched on by one date, which is easy to miss — so when a
+// plan clearly spans a year and that date is unset, say so here rather than
+// leaving the feature invisible.
+function SplitPrompt({ budget }: { budget: SeasonBudget }) {
+  const standard = budget.playerBalances.find((p) => !p.hasOverride) ?? budget.playerBalances[0];
+  const dates = (standard?.installments ?? [])
+    .map((i) => i.dueDate)
+    .filter((d): d is string => Boolean(d))
+    .sort();
+  if (dates.length < 2) return null;
+
+  const first = Date.parse(dates[0]);
+  const last = Date.parse(dates[dates.length - 1]);
+  const months = (last - first) / (1000 * 60 * 60 * 24 * 30.4);
+  if (!Number.isFinite(months) || months < 5) return null;
+
+  return (
+    <div className="panel" style={{ marginTop: 16 }}>
+      <p className="notice" style={{ margin: 0 }}>
+        Your payments run from <strong>{dates[0]}</strong> to{' '}
+        <strong>{dates[dates.length - 1]}</strong> — most of a year. Set{' '}
+        <strong>spring starts</strong> on the Settings page and teamledger will split this season
+        in two, showing what each half costs against what its own payments raise, so you can see
+        the fall covers itself rather than borrowing from the spring.
+      </p>
+    </div>
+  );
+}
+
+function PlanNote({ budget }: { budget: SeasonBudget }) {
+  // A player on the standard rate; someone with an override owes different
+  // figures and would misrepresent the plan.
+  const standard = budget.playerBalances.find((p) => !p.hasOverride) ?? budget.playerBalances[0];
+  const plan = standard?.installments ?? [];
+  if (plan.length < 2) return null;
+
+  const parts = plan.map((i) => {
+    const name = i.label?.trim();
+    const when = i.dueDate ? ` by ${i.dueDate}` : '';
+    return `${fmt(i.amountCents)}${when}${name ? ` (${name})` : ''}`;
+  });
+
+  return (
+    <p className="notice">
+      Payment plan: {plan.length} payments — {parts.join(', ')}. Every player's own figures are on
+      the roster; change the plan on the Settings page.
+    </p>
+  );
+}
+
 // Does each half of the season pay for itself?
 //
 // An annual total can look healthy while the autumn is quietly funded by money
@@ -232,6 +287,7 @@ function SegmentSummary({ segments }: { segments: SegmentTotals[] }) {
     spring: 'Spring',
     unassigned: 'Not dated',
   };
+  const unassigned = segments.find((s) => s.segment === 'unassigned');
   return (
     <>
       <h2>Does each half cover itself?</h2>
@@ -255,13 +311,20 @@ function SegmentSummary({ segments }: { segments: SegmentTotals[] }) {
                 <td className="num hide-sm">{fmt(s.creditsCents)}</td>
                 <td className="num">{fmt(s.netDueCents)}</td>
                 <td className="num">{fmt(s.scheduledCents)}</td>
-                <td className={`num ${s.coverageCents < 0 ? 'owes' : 'settled'}`}>
-                  {s.coverageCents < 0
-                    ? `${fmt(s.coverageCents)} short`
-                    : s.coverageCents === 0
-                      ? 'covered'
-                      : `${fmt(s.coverageCents)} spare`}
-                </td>
+                {s.segment === 'unassigned' ? (
+                  // Nothing here is "short" — it is simply not in either half
+                  // yet. Showing a shortfall against costs with no date would
+                  // be alarming and untrue.
+                  <td className="num muted">not counted</td>
+                ) : (
+                  <td className={`num ${s.coverageCents < 0 ? 'owes' : 'settled'}`}>
+                    {s.coverageCents < 0
+                      ? `${fmt(s.coverageCents)} short`
+                      : s.coverageCents === 0
+                        ? 'covered'
+                        : `${fmt(s.coverageCents)} spare`}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -269,9 +332,15 @@ function SegmentSummary({ segments }: { segments: SegmentTotals[] }) {
         <p className="notice">
           "Payments due" is what the instalments falling in that half add up to across the whole
           roster. A half that is short is one you will be paying for out of the other half's money —
-          move an instalment date, or a cost, until both cover themselves. Anything without a date
-          lands under "not dated" rather than being counted toward either.
+          move an instalment date, or a cost, until both cover themselves.
         </p>
+        {unassigned && unassigned.expensesCents > 0 && (
+          <p className="notice">
+            <strong>{fmt(unassigned.expensesCents)} is not in either half.</strong> Those costs have
+            no date, so they are excluded from both subtotals rather than guessed at — give them an
+            incurred date, or set their half directly, and they will be counted.
+          </p>
+        )}
       </div>
     </>
   );

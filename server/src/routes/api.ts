@@ -251,6 +251,9 @@ api.patch(
     const body = z
       .object({
         name: z.string().nullish(),
+        // Must be settable here and not only at creation: nobody knows they
+        // want the season split until they are looking at the budget.
+        springStartsOn: z.string().nullish(),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),
         firstPaymentCents: money.nullish(),
