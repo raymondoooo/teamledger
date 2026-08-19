@@ -41,6 +41,9 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
   if (error) return <div className="error">{error}</div>;
   if (!budget) return <p className="muted">Loading…</p>;
 
+  // Only worth showing a Half column when the season actually has halves.
+  const split = budget.segments !== null;
+
   const remove = (kind: 'expenses' | 'credits', id: number) =>
     api.del(`/${kind}/${id}`).then(load).catch((err: Error) => setError(err.message));
 
@@ -55,6 +58,7 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
             seasonId={ctx.season.id}
             options={EXPENSE_CATEGORIES}
             field="category"
+            split={split}
             onAdded={() => {
               close();
               load();
@@ -68,6 +72,7 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
               <th>Category</th>
               <th>Line</th>
               <th className="num">Amount</th>
+              {split && <th title="Which half of the season this cost belongs to">Half</th>}
               <th>Paid</th>
               <th />
             </tr>
@@ -86,6 +91,18 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
                     )}
                   </td>
                   <td className="num">{fmt(line.amountCents)}</td>
+                  {split && (
+                    <td>
+                      {line.source === 'manual' ? (
+                        <HalfCell line={line} onChanged={load} onError={setError} />
+                      ) : (
+                        // Derived lines take their half from the calendar, so
+                        // overriding them here would be undone on the next
+                        // recalculation.
+                        <span className="muted">{line.segment ?? '—'}</span>
+                      )}
+                    </td>
+                  )}
                   <td>
                     {line.source === 'manual' ? (
                       <PaidCell line={line} onChanged={load} onError={setError} />
@@ -218,6 +235,44 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
 
 // Marking an expense paid writes the bank withdrawal. The date is editable
 // because the day a cost is incurred is rarely the day the money leaves.
+// Puts a manual cost in a half. Dated lines work themselves out, but plenty of
+// costs have no useful date — a coach's fee agreed in July for the spring — and
+// without this they sat under "not counted" with no way to move them.
+function HalfCell({
+  line,
+  onChanged,
+  onError,
+}: {
+  line: BudgetLine;
+  onChanged: () => void;
+  onError: (m: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const value = line.segment ?? '';
+
+  const set = (next: string) => {
+    setBusy(true);
+    api
+      .patch(`/expenses/${line.id}`, { segment: next === '' ? null : next })
+      .then(onChanged)
+      .catch((e: Error) => onError(e.message))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <select
+      value={value}
+      disabled={busy}
+      onChange={(e) => set(e.target.value)}
+      aria-label="Half of the season"
+    >
+      <option value="">by date</option>
+      <option value="fall">Fall</option>
+      <option value="spring">Spring</option>
+    </select>
+  );
+}
+
 // The actual payment plan, in the words of the plan itself. This used to be a
 // fixed sentence about a first payment and a remainder, which stopped being
 // true the moment a season could have four instalments — and went on being
@@ -410,17 +465,20 @@ function AddLine({
   seasonId,
   options,
   field,
+  split,
   onAdded,
 }: {
   kind: 'expenses' | 'credits';
   seasonId: number;
   options: readonly (readonly [string, string])[];
   field: 'category' | 'kind';
+  split?: boolean;
   onAdded: () => void;
 }) {
   const [group, setGroup] = useState(options[0][0]);
   const [label, setLabel] = useState('');
   const [amount, setAmount] = useState('');
+  const [half, setHalf] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const submit = (e: React.FormEvent) => {
@@ -429,10 +487,16 @@ function AddLine({
     if (cents === null) return setError('Enter an amount like 275 or 1,234.50');
     setError(null);
     api
-      .post(`/seasons/${seasonId}/${kind}`, { [field]: group, label, amountCents: cents })
+      .post(`/seasons/${seasonId}/${kind}`, {
+        [field]: group,
+        label,
+        amountCents: cents,
+        ...(kind === 'expenses' && half ? { segment: half } : {}),
+      })
       .then(() => {
         setLabel('');
         setAmount('');
+        setHalf('');
         onAdded();
       })
       .catch((err: Error) => setError(err.message));
@@ -461,6 +525,16 @@ function AddLine({
         <label>Amount</label>
         <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="90.00" required />
       </div>
+      {split && kind === 'expenses' && (
+        <div className="field">
+          <label>Half</label>
+          <select value={half} onChange={(e) => setHalf(e.target.value)}>
+            <option value="">by date</option>
+            <option value="fall">Fall</option>
+            <option value="spring">Spring</option>
+          </select>
+        </div>
+      )}
       <button type="submit">Add</button>
       {error && <span className="owes" style={{ fontSize: 13 }}>{error}</span>}
     </form>
