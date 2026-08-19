@@ -101,6 +101,7 @@ jobs:
   # "works on my machine" regressions before they reach anyone.
   container:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
 
@@ -318,6 +319,11 @@ jobs:
       # money, right routes, right HTML, empty page. Only a browser can tell the
       # difference, so one runs here.
       - name: The app must actually render, not just return HTML
+        # A browser check can hang rather than fail — a download that stalls, a
+        # page that never goes idle. Without a bound it sits there until the
+        # six-hour job limit, which is indistinguishable from a slow build and
+        # wastes an afternoon. Fail fast and be obvious about it.
+        timeout-minutes: 8
         run: |
           set -e
           npm i --no-save playwright@1

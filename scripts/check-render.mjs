@@ -42,7 +42,10 @@ page.on('requestfailed', (r) => problems.push(`failed request: ${r.url()}`));
 
 let failed = false;
 try {
-  await page.goto(url, { waitUntil: 'networkidle', timeout: 30_000 });
+  // 'load' rather than 'networkidle': a page that keeps a connection open never
+  // goes idle, and waiting for that is a hang rather than a failure. The wait
+  // below is what gives the app time to mount.
+  await page.goto(url, { waitUntil: 'load', timeout: 30_000 });
   await page.waitForTimeout(1500);
 
   const root = await page.evaluate(() => {
