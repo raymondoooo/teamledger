@@ -116,8 +116,9 @@ export default function App() {
           <NavLink to="/exports">Exports</NavLink>
           <NavLink to="/settings">Settings</NavLink>
         </nav>
-        <div style={{ marginTop: 'auto', padding: '16px 20px 0' }}>
+        <div className="sidebar-foot">
           <button className="link" onClick={logout}>Sign out</button>
+          <span className="version">v{__APP_VERSION__}</span>
         </div>
       </aside>
 

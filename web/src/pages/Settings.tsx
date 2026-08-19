@@ -329,6 +329,13 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
           <Rollover ctx={ctx} />
         </div>
       </Collapsible>
+
+      {/* The sidebar shows this too, but not on a phone, where the menu is a
+          one-line strip with no room for it. This is where you look when
+          someone asks which build you are on. */}
+      <p className="muted" style={{ fontSize: 12, marginTop: 24 }}>
+        teamledger v{__APP_VERSION__}
+      </p>
     </>
   );
 }

@@ -45,6 +45,13 @@ a { color: var(--accent); }
 
 .layout { display: flex; min-height: 100vh; }
 
+/* Pinned to the viewport so the menu stays reachable while a long table
+   scrolls. `align-self` is the load-bearing part: a flex child stretches to the
+   full height of `.layout` by default, and a sticky element exactly as tall as
+   its container has nothing to slide against, so `top: 0` alone does nothing.
+   Sizing it to the viewport instead gives it somewhere to stick — and
+   `overflow-y` keeps the sign-out button reachable on a short window rather
+   than clipping it. */
 .sidebar {
   width: 210px;
   flex-shrink: 0;
@@ -53,6 +60,11 @@ a { color: var(--accent); }
   padding: 20px 0;
   display: flex;
   flex-direction: column;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .brand {
@@ -77,7 +89,21 @@ a { color: var(--accent); }
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
-.main { flex: 1; padding: 24px 32px; max-width: 1100px; }
+/* `margin-top: auto` is what holds this to the bottom of the sidebar. */
+.sidebar-foot { margin-top: auto; padding: 16px 20px 0; }
+
+/* Which build is actually running. Worth having on screen: this app is
+   self-hosted and updated by hand, so "have you got the fix?" is otherwise
+   answered by going and reading a docker tag. */
+.sidebar-foot .version {
+  display: block;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.main { flex: 1; padding: 24px 32px; max-width: 1100px; min-width: 0; }
 
 .topbar {
   display: flex;
@@ -240,6 +266,10 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
     align-items: center;
     gap: 8px;
     overflow: hidden;
+    /* Undo the full-height column of the desktop rule. Left in place, a 100vh
+       strip across the top would cover the whole screen. */
+    align-self: stretch;
+    height: auto;
   }
 
   .brand { padding: 0 10px; font-size: 15px; flex-shrink: 0; }
@@ -267,12 +297,16 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
   .nav a.active { box-shadow: none; }
 
   /* Sign out: never squeezed, never wrapped. */
-  .sidebar > div:last-child {
-    margin-top: 0 !important;
-    padding: 0 10px 8px !important;
+  .sidebar-foot {
+    margin-top: 0;
+    padding: 0 10px 8px;
     flex-shrink: 0;
     white-space: nowrap;
   }
+
+  /* No room for it in a one-line strip, and it is a thing you go looking for
+     rather than something you need at a glance. Settings still shows it. */
+  .sidebar-foot .version { display: none; }
 
   .main { padding: 14px 12px 40px; max-width: none; }
 
