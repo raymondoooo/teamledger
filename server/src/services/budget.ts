@@ -16,6 +16,7 @@ import {
   trainers,
 } from '../db/schema.js';
 import { allocateInstalments, quotedShareCents, splitEvenly } from './money.js';
+import { expectedSessionsFor } from './trainers.js';
 
 // This module is the only place the spreadsheet's arithmetic lives. Screens,
 // exports and the rollover all read from computeSeasonBudget — nothing
@@ -289,7 +290,7 @@ export async function recalculateDerivedExpenses(seasonId: number): Promise<void
   for (const [trainerId, trainer] of trainerById) {
     const mine = freshCharges.filter((c) => c.trainerId === trainerId);
     const scheduled = mine.length;
-    const billed = Math.max(scheduled, trainer.expectedSessions);
+    const billed = Math.max(scheduled, expectedSessionsFor(trainer));
     if (billed === 0) continue;
 
     const scheduledTotal = mine.reduce((sum, c) => sum + c.amountCents, 0);

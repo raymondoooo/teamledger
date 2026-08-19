@@ -68,7 +68,11 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
               <th className="hide-sm">Initials</th>
               <th className="num">Rate</th>
               <th className="hide-sm">Per</th>
-              <th className="num">Expected</th>
+              <th className="num hide-sm" title="Games you expect in the autumn">Fall G</th>
+              <th className="num hide-sm" title="Practices you expect in the autumn">Fall P</th>
+              <th className="num hide-sm" title="Games you expect in the spring">Spr G</th>
+              <th className="num hide-sm" title="Practices you expect in the spring">Spr P</th>
+              <th className="num" title="The four added up — this is what gets billed">Total</th>
               <th className="hide-sm">Primary</th>
               <th />
             </tr>
@@ -86,6 +90,12 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
           A trainer's rate is charged for <em>every</em> event they are attached to, whatever its
           type. The <strong>primary</strong> trainer is attached automatically to new events —
           imported from the calendar or added by hand — so a one-coach team never has to set it.
+        </p>
+        <p className="notice">
+          The four counts are what you expect to owe them for across the year — enter them as you
+          count them and the <strong>total</strong> is added up for you. Whichever is larger, that
+          total or the sessions actually on the calendar, is what the budget bills, so dues can be
+          set before the schedule exists.
         </p>
       </AddSection>
 
@@ -474,7 +484,15 @@ function TournamentPaid({
   return <button className="link" onClick={() => setEditing(true)}>Mark paid</button>;
 }
 
-function CountField({ value, onSave }: { value: number; onSave: (n: number) => Promise<unknown> }) {
+function CountField({
+  value,
+  onSave,
+  title,
+}: {
+  value: number;
+  onSave: (n: number) => Promise<unknown>;
+  title?: string;
+}) {
   const [text, setText] = useState(String(value));
 
   useEffect(() => setText(String(value)), [value]);
@@ -487,6 +505,7 @@ function CountField({ value, onSave }: { value: number; onSave: (n: number) => P
 
   return (
     <input
+      title={title}
       type="number"
       min={0}
       value={text}
@@ -564,6 +583,23 @@ function AddTournament({ seasonId, onAdded }: { seasonId: number; onAdded: () =>
   );
 }
 
+// The four counts a treasurer actually has to hand, rather than one total they
+// would otherwise have to add up themselves.
+const EXPECTED_FIELDS = [
+  ['expectedFallGames', 'Games you expect in the autumn'],
+  ['expectedFallPractices', 'Practices you expect in the autumn'],
+  ['expectedSpringGames', 'Games you expect in the spring'],
+  ['expectedSpringPractices', 'Practices you expect in the spring'],
+] as const;
+
+// Mirrors expectedSessionsFor() on the server: the breakdown wins, and the old
+// single total is only used while the breakdown is still all zeros.
+function expectedTotal(t: Trainer): number {
+  const broken =
+    t.expectedFallGames + t.expectedFallPractices + t.expectedSpringGames + t.expectedSpringPractices;
+  return broken > 0 ? broken : t.expectedSessions;
+}
+
 function TrainerRow({ trainer, onSaved }: { trainer: Trainer; onSaved: () => void }) {
   const [rate, setRate] = useState((trainer.defaultRateCents / 100).toFixed(2));
   const [dirty, setDirty] = useState(false);
@@ -592,18 +628,29 @@ function TrainerRow({ trainer, onSaved }: { trainer: Trainer; onSaved: () => voi
         />
       </td>
       <td className="hide-sm">{trainer.rateUnit === 'flat' ? 'season' : 'session'}</td>
-      <td className="num">
-        {trainer.rateUnit === 'flat' ? (
-          <span className="muted">—</span>
-        ) : (
-          <CountField
-            value={trainer.expectedSessions}
-            onSave={(n) =>
-              api.patch(`/trainers/${trainer.id}`, { expectedSessions: n }).then(onSaved)
-            }
-          />
-        )}
-      </td>
+      {trainer.rateUnit === 'flat' ? (
+        <>
+          <td className="num hide-sm" colSpan={4} />
+          <td className="num">
+            <span className="muted">—</span>
+          </td>
+        </>
+      ) : (
+        <>
+          {EXPECTED_FIELDS.map(([key, title]) => (
+            <td className="num hide-sm" key={key}>
+              <CountField
+                value={trainer[key]}
+                title={title}
+                onSave={(n) => api.patch(`/trainers/${trainer.id}`, { [key]: n }).then(onSaved)}
+              />
+            </td>
+          ))}
+          <td className="num" title="Fall and spring, games and practices, added up">
+            <strong>{expectedTotal(trainer)}</strong>
+          </td>
+        </>
+      )}
       <td className="hide-sm">
         {trainer.isPrimary ? (
           <span className="badge">Primary</span>
@@ -628,7 +675,12 @@ function AddTrainer({ teamId, onAdded }: { teamId: number; onAdded: () => void }
   const [initials, setInitials] = useState('');
   const [rate, setRate] = useState('');
   const [unit, setUnit] = useState<'per_session' | 'flat'>('per_session');
-  const [expected, setExpected] = useState('0');
+  const [counts, setCounts] = useState({
+    expectedFallGames: '0',
+    expectedFallPractices: '0',
+    expectedSpringGames: '0',
+    expectedSpringPractices: '0',
+  });
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -639,13 +691,21 @@ function AddTrainer({ teamId, onAdded }: { teamId: number; onAdded: () => void }
         initials: initials || null,
         defaultRateCents: cents,
         rateUnit: unit,
-        expectedSessions: Math.max(0, Number(expected) || 0),
+        expectedFallGames: Math.max(0, Number(counts.expectedFallGames) || 0),
+        expectedFallPractices: Math.max(0, Number(counts.expectedFallPractices) || 0),
+        expectedSpringGames: Math.max(0, Number(counts.expectedSpringGames) || 0),
+        expectedSpringPractices: Math.max(0, Number(counts.expectedSpringPractices) || 0),
       })
       .then(() => {
         setName('');
         setInitials('');
         setRate('');
-        setExpected('0');
+        setCounts({
+          expectedFallGames: '0',
+          expectedFallPractices: '0',
+          expectedSpringGames: '0',
+          expectedSpringPractices: '0',
+        });
         onAdded();
       });
   };
@@ -671,16 +731,20 @@ function AddTrainer({ teamId, onAdded }: { teamId: number; onAdded: () => void }
           <option value="flat">Season</option>
         </select>
       </div>
-      <div className="field" style={{ width: 90 }}>
-        <label>Expected</label>
-        <input
-          type="number"
-          min={0}
-          value={expected}
-          onChange={(e) => setExpected(e.target.value)}
-          title="How many sessions you expect this season"
-        />
-      </div>
+      {EXPECTED_FIELDS.map(([key, title]) => (
+        <div className="field" style={{ width: 74 }} key={key}>
+          <label>
+            {key.includes('Fall') ? 'Fall' : 'Spr'} {key.includes('Games') ? 'G' : 'P'}
+          </label>
+          <input
+            type="number"
+            min={0}
+            value={counts[key]}
+            onChange={(e) => setCounts((c) => ({ ...c, [key]: e.target.value }))}
+            title={title}
+          />
+        </div>
+      ))}
       <button type="submit">Add trainer</button>
     </form>
   );

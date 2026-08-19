@@ -197,10 +197,20 @@ export const trainers = sqliteTable('trainers', {
   // needs no per-event fiddling. At most one per team; setting a new one clears
   // the old.
   isPrimary: integer('is_primary', { mode: 'boolean' }).notNull().default(false),
-  // How many sessions you expect to owe this trainer for over the season.
-  // Same rule as cost_rules.expectedCount: the larger of this and the number
-  // actually on the calendar is what gets billed, so a season can be budgeted
-  // before TeamSnap has a single practice in it.
+  // How many sessions you expect to owe this trainer for over the season, split
+  // the way a treasurer actually counts them: so many games and practices in
+  // the autumn, so many in the spring. They are summed — the app does the
+  // addition so nobody is totting up 20 + 15 + 18 + 12 by hand and getting it
+  // wrong. Same rule as cost_rules.expectedCount once summed: the larger of the
+  // total and the number actually on the calendar is what gets billed, so a
+  // season can be budgeted before the calendar has a single practice in it.
+  expectedFallGames: integer('expected_fall_games').notNull().default(0),
+  expectedFallPractices: integer('expected_fall_practices').notNull().default(0),
+  expectedSpringGames: integer('expected_spring_games').notNull().default(0),
+  expectedSpringPractices: integer('expected_spring_practices').notNull().default(0),
+  // The old single total. Superseded by the four above and kept only so a
+  // trainer configured before the split keeps their forecast until someone
+  // fills the breakdown in — see expectedSessionsFor() in services/trainers.ts.
   expectedSessions: integer('expected_sessions').notNull().default(0),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(now),

@@ -691,6 +691,10 @@ api.post(
         defaultRateCents: money.default(0),
         rateUnit: z.enum(['per_session', 'flat']).default('per_session'),
         isPrimary: z.boolean().default(false),
+        expectedFallGames: z.number().int().min(0).default(0),
+        expectedFallPractices: z.number().int().min(0).default(0),
+        expectedSpringGames: z.number().int().min(0).default(0),
+        expectedSpringPractices: z.number().int().min(0).default(0),
         expectedSessions: z.number().int().min(0).default(0),
       })
       .parse(req.body);
@@ -699,6 +703,12 @@ api.post(
       .insert(trainers)
       .values({ ...body, teamId })
       .returning();
+    // A new trainer with expected sessions is a cost the moment they exist, so
+    // the derived lines have to follow — the same as editing one does. Without
+    // this the budget sat unchanged until something unrelated triggered a
+    // recalculation, and the forecast looked like it had been ignored.
+    const seasonRows = await db.select().from(seasons).where(eq(seasons.teamId, teamId));
+    for (const s of seasonRows) await recalculateDerivedExpenses(s.id);
     res.json(row);
   }),
 );
@@ -719,6 +729,10 @@ api.patch(
         defaultRateCents: money.optional(),
         rateUnit: z.enum(['per_session', 'flat']).optional(),
         isPrimary: z.boolean().optional(),
+        expectedFallGames: z.number().int().min(0).optional(),
+        expectedFallPractices: z.number().int().min(0).optional(),
+        expectedSpringGames: z.number().int().min(0).optional(),
+        expectedSpringPractices: z.number().int().min(0).optional(),
         expectedSessions: z.number().int().min(0).optional(),
         active: z.boolean().optional(),
       })

@@ -125,6 +125,10 @@ export type Trainer = {
   defaultRateCents: number;
   rateUnit: 'per_session' | 'flat';
   isPrimary: boolean;
+  expectedFallGames: number;
+  expectedFallPractices: number;
+  expectedSpringGames: number;
+  expectedSpringPractices: number;
   expectedSessions: number;
   active: boolean;
 };

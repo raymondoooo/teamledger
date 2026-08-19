@@ -13,6 +13,7 @@ import {
   trainerPayments,
   trainers,
 } from '../db/schema.js';
+import { expectedSessionsFor } from './trainers.js';
 
 // The team's real bank account, and the two things that make it disagree with
 // the payment ledger if you do not track them:
@@ -252,7 +253,7 @@ export async function trainerLedger(
         : completed.reduce((s, c) => s + c.amountCents, 0);
 
     const billedSessions =
-      t.rateUnit === 'flat' ? 1 : Math.max(scheduledSessions, t.expectedSessions);
+      t.rateUnit === 'flat' ? 1 : Math.max(scheduledSessions, expectedSessionsFor(t));
     const scheduledTotal = mine.reduce((s, c) => s + c.amountCents, 0);
     const forecastCents =
       t.rateUnit === 'flat'
