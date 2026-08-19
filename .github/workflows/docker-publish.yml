@@ -580,14 +580,34 @@ jobs:
 
   # Only fires on a v* tag, and only after both test jobs pass. arm64 matters
   # because plenty of self-hosters run this on a Pi or a NAS.
+  # ── Building each architecture on its own hardware ──────────────────────
+  # This used to be one job building both platforms with QEMU, and the emulated
+  # arm64 half took 25-40 minutes — occasionally over 90 — while amd64 finished
+  # in four. GitHub's arm64 runners are free for public repositories, so there
+  # is no reason to emulate: each platform now builds natively and in parallel,
+  # and the release finishes in about the time the slower leg takes on its own.
+  #
+  # Each leg pushes an untagged image and reports back its digest; the merge job
+  # below is what turns those digests into the tags people actually pull. That
+  # indirection is the price of splitting the build, and it is why no tag exists
+  # until both architectures have succeeded — a release is never half-published.
   publish:
     needs: [unit, container]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            slug: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            slug: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-
-      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
 
       - name: Log in to Docker Hub
@@ -606,10 +626,77 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Labels for this build
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/teamledger
+            ghcr.io/${{ github.repository }}
+
+      # Pushed by digest and left untagged. Both registries get the same blobs
+      # so the merge step can build a manifest list in each.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+          # Cache is per platform; sharing one scope would have the two legs
+          # evicting each other's layers every run.
+          cache-from: type=gha,scope=${{ matrix.slug }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.slug }}
+          outputs: |
+            type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/teamledger,push-by-digest=true,name-canonical=true,push=true
+            type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Hand the digest to the merge job
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${{ matrix.slug }}=${{ steps.build.outputs.digest }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.slug }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  # Turns the two per-architecture digests into the tags people pull. Only runs
+  # once both have been pushed, so :latest never points at a half-built release.
+  release:
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          merge-multiple: true
+          path: /tmp/digests
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # v1.2.3 produces :1.2.3, :1.2, :1 and :latest, so users can pin as tightly
-      # or as loosely as they like. Also emits the OCI labels linking the image
-      # back to this repo.
-      - name: Derive tags and labels
+      # or as loosely as they like.
+      - name: Derive tags
         id: meta
         uses: docker/metadata-action@v6
         with:
@@ -621,17 +708,35 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
 
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          provenance: true
-          sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create the manifest lists
+        run: |
+          set -e
+          digests=""
+          for f in /tmp/digests/*; do
+            digests="$digests ${f##*=}"
+          done
+          echo "digests:$digests"
+
+          for repo in "${{ secrets.DOCKERHUB_USERNAME }}/teamledger" "ghcr.io/${{ github.repository }}"; do
+            refs=""
+            for d in $digests; do refs="$refs $repo@$d"; done
+            tags=""
+            for t in $(echo '${{ steps.meta.outputs.tags }}'); do
+              case "$t" in
+                "$repo":*) tags="$tags -t $t" ;;
+              esac
+            done
+            [ -n "$tags" ] || { echo "no tags for $repo"; exit 1; }
+            echo "tagging $repo:$tags"
+            docker buildx imagetools create $tags $refs
+          done
+
+      - name: Show what was published
+        run: |
+          for t in $(echo '${{ steps.meta.outputs.tags }}'); do
+            echo "== $t"
+            docker buildx imagetools inspect "$t" | grep -E "Name|Platform" | head -8
+          done
 
       # Keeps the Docker Hub overview in step with a release, so the page people
       # land on is never describing an older version. It syncs a page written
