@@ -653,10 +653,13 @@ jobs:
             type=image,name=${{ secrets.DOCKERHUB_USERNAME }}/teamledger,push-by-digest=true,name-canonical=true,push=true
             type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
 
+      # The digest goes *inside* the file, not in its name: upload-artifact
+      # rejects a colon in a filename (it would be illegal on NTFS), and every
+      # digest is "sha256:...".
       - name: Hand the digest to the merge job
         run: |
           mkdir -p /tmp/digests
-          touch "/tmp/digests/${{ matrix.slug }}=${{ steps.build.outputs.digest }}"
+          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.slug }}"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -713,7 +716,7 @@ jobs:
           set -e
           digests=""
           for f in /tmp/digests/*; do
-            digests="$digests ${f##*=}"
+            digests="$digests $(cat "$f")"
           done
           echo "digests:$digests"
 
