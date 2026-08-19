@@ -263,6 +263,14 @@ api.patch(
       })
       .parse(req.body);
     const [season] = await db.update(seasons).set(body).where(eq(seasons.id, id)).returning();
+    // Moving the fall/spring boundary changes which half every derived line
+    // belongs to, and whether they are split at all. Without this the budget
+    // kept the shape it had when the lines were last written — the halves read
+    // $0 and everything sat under "not counted", which looks like the feature
+    // is broken rather than stale.
+    if ('springStartsOn' in (req.body as Record<string, unknown>)) {
+      await recalculateDerivedExpenses(id);
+    }
     res.json(season);
   }),
 );

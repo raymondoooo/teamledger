@@ -285,11 +285,19 @@ export async function recalculateDerivedExpenses(seasonId: number): Promise<void
     // as a flat top-up rather than as phantom charges against events that do not
     // exist yet. Doing it per half is what lets the fall be checked against the
     // fall's income rather than the year's.
+    // With no boundary date there are no halves, so the rule is a single line
+    // covering the whole season. Emitting two indistinguishable rows — which is
+    // what iterating the halves unconditionally did — just looked like a bug.
     const expected = expectedCountsFor(rule);
-    for (const half of SEGMENTS) {
-      const mine = ruleCharges.filter((c) => segmentByEvent.get(c.eventId) === half);
+    const halves: (Segment | null)[] = split ? [...SEGMENTS] : [null];
+    for (const half of halves) {
+      const mine =
+        half === null
+          ? ruleCharges
+          : ruleCharges.filter((c) => segmentByEvent.get(c.eventId) === half);
       const scheduled = mine.length;
-      const billed = Math.max(scheduled, expected[half]);
+      const want = half === null ? expected.fall + expected.spring : expected[half];
+      const billed = Math.max(scheduled, want);
       if (billed === 0) continue;
 
       const scheduledTotal = mine.reduce((sum, c) => sum + c.amountCents, 0);
@@ -301,10 +309,10 @@ export async function recalculateDerivedExpenses(seasonId: number): Promise<void
         seasonId,
         category: rule.kind === 'ref_fee' ? 'ref_fees' : 'training',
         // Only says which half when the season actually has two.
-        label: split ? `${rule.label} — ${half} (${counts})` : `${rule.label} (${counts})`,
+        label: half ? `${rule.label} — ${half} (${counts})` : `${rule.label} (${counts})`,
         amountCents: total,
         source: 'derived',
-        segment: split ? half : null,
+        segment: half,
         ruleId: rule.id,
       });
     }
@@ -335,10 +343,13 @@ export async function recalculateDerivedExpenses(seasonId: number): Promise<void
   for (const [trainerId, trainer] of trainerById) {
     const mine = freshCharges.filter((c) => c.trainerId === trainerId);
     const expected = expectedSessionsBySegment(trainer);
-    for (const half of SEGMENTS) {
-      const half_charges = mine.filter((c) => segmentByEvent.get(c.eventId) === half);
+    const halves: (Segment | null)[] = split ? [...SEGMENTS] : [null];
+    for (const half of halves) {
+      const half_charges =
+        half === null ? mine : mine.filter((c) => segmentByEvent.get(c.eventId) === half);
       const scheduled = half_charges.length;
-      const billed = Math.max(scheduled, expected[half]);
+      const want = half === null ? expected.fall + expected.spring : expected[half];
+      const billed = Math.max(scheduled, want);
       if (billed === 0) continue;
 
       const scheduledTotal = half_charges.reduce((sum, c) => sum + c.amountCents, 0);
@@ -352,10 +363,10 @@ export async function recalculateDerivedExpenses(seasonId: number): Promise<void
       await db.insert(expenses).values({
         seasonId,
         category: 'training',
-        label: split ? `${trainer.name} — ${half} (${counts})` : `${trainer.name} (${counts})`,
+        label: half ? `${trainer.name} — ${half} (${counts})` : `${trainer.name} (${counts})`,
         amountCents: total,
         source: 'derived',
-        segment: split ? half : null,
+        segment: half,
       });
     }
   }

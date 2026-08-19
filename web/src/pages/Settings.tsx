@@ -386,7 +386,7 @@ function RenameSeason({ ctx }: { ctx: SeasonContext }) {
           />
         </div>
         <button onClick={save} disabled={busy} style={{ alignSelf: 'end', marginBottom: 2 }}>
-          {busy ? 'Saving…' : 'Rename'}
+          {busy ? 'Saving…' : 'Save'}
         </button>
       </div>
       <p className="notice" style={{ marginTop: 0 }}>
