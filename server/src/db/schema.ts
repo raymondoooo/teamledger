@@ -23,6 +23,8 @@ const RATE_UNIT = ['per_session', 'flat'] as const;
 const COST_RULE_KIND = ['ref_fee', 'training'] as const;
 const EXPENSE_CATEGORY = ['training', 'ref_fees', 'tournaments', 'jerseys', 'misc'] as const;
 const EXPENSE_SOURCE = ['manual', 'derived'] as const;
+// The two halves of a season billed across a whole year.
+const SEASON_SEGMENT = ['fall', 'spring'] as const;
 const CREDIT_KIND = ['credit', 'fundraiser', 'sponsor'] as const;
 const PAYMENT_METHOD = ['venmo', 'cash', 'zelle', 'check', 'other'] as const;
 
@@ -102,6 +104,11 @@ export const seasons = sqliteTable(
     firstPaymentCents: integer('first_payment_cents'),
     firstPaymentDue: text('first_payment_due'),
     finalPaymentDue: text('final_payment_due'),
+    // The day the second half of the season begins. Everything dated before it
+    // is "fall", everything on or after is "spring" — which is how a game, a
+    // dated expense or an instalment works out its own half without anyone
+    // tagging it. Null means the season is not split and everything is one pot.
+    springStartsOn: text('spring_starts_on'),
     // Set by rollover when the season is closed, so historical seasons keep
     // reporting the numbers they ended with even if a rule is edited later.
     closedAt: integer('closed_at', { mode: 'timestamp' }),
@@ -276,10 +283,14 @@ export const costRules = sqliteTable(
     trainerId: integer('trainer_id').references(() => trainers.id, { onDelete: 'cascade' }),
     amountCents: integer('amount_cents').notNull(),
     unit: text('unit', { enum: RATE_UNIT }).notNull().default('per_session'),
-    // How many of these you expect over the season, for budgeting before the
-    // schedule exists. The engine bills whichever is larger, this or the number
-    // actually on the calendar — so dues can be set in pre-season and still
-    // follow reality if more sessions get added later.
+    // How many of these you expect in each half, for budgeting before the
+    // schedule exists. Counted per half so each half can be checked against its
+    // own income; the engine bills whichever is larger within a half, the
+    // expectation or the number actually on the calendar.
+    expectedFallCount: integer('expected_fall_count').notNull().default(0),
+    expectedSpringCount: integer('expected_spring_count').notNull().default(0),
+    // The old single total, still used while both of the above are zero so a
+    // rule written before the split keeps its forecast.
     expectedCount: integer('expected_count').notNull().default(0),
     active: integer('active', { mode: 'boolean' }).notNull().default(true),
     createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(now),
@@ -354,6 +365,11 @@ export const expenses = sqliteTable(
     category: text('category', { enum: EXPENSE_CATEGORY }).notNull(),
     label: text('label').notNull(),
     amountCents: integer('amount_cents').notNull(),
+    // Which half of the season this cost belongs to. Derived rows are stamped by
+    // the engine. A manual row works itself out from incurredOn when it has one,
+    // and this column is the override for when it does not, or when the date
+    // lies — a kit order paid in August for the spring, say.
+    segment: text('segment', { enum: SEASON_SEGMENT }),
     // 'derived' rows are owned by the cost-rule engine and are rewritten on every
     // recalculation — do not edit them by hand, edit the rule or the charge.
     source: text('source', { enum: EXPENSE_SOURCE }).notNull().default('manual'),

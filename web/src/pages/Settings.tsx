@@ -125,13 +125,15 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
               <th className="hide-sm">Trainer</th>
               <th className="num">Amount</th>
               <th className="hide-sm">Per</th>
-              <th className="num">Expected</th>
+              <th className="num hide-sm" title="How many you expect in the autumn">Fall</th>
+              <th className="num hide-sm" title="How many you expect in the spring">Spring</th>
+              <th className="num" title="The two added up — this is what gets billed">Total</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {rules.length === 0 && (
-              <tr><td colSpan={7} className="muted">No rules yet — add one below.</td></tr>
+              <tr><td colSpan={9} className="muted">No rules yet — add one below.</td></tr>
             )}
             {rules.map((r) => (
               <tr key={r.id}>
@@ -142,18 +144,40 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
                 </td>
                 <td className="num">{fmt(r.amountCents)}</td>
                 <td className="hide-sm">{r.unit === 'flat' ? 'season' : 'event'}</td>
-                <td className="num">
-                  {r.unit === 'flat' ? (
-                    <span className="muted">—</span>
-                  ) : (
-                    <CountField
-                      value={r.expectedCount}
-                      onSave={(n) =>
-                        api.patch(`/cost-rules/${r.id}`, { expectedCount: n }).then(load)
-                      }
-                    />
-                  )}
-                </td>
+                {r.unit === 'flat' ? (
+                  <>
+                    <td className="num hide-sm" colSpan={2} />
+                    <td className="num"><span className="muted">—</span></td>
+                  </>
+                ) : (
+                  <>
+                    <td className="num hide-sm">
+                      <CountField
+                        value={r.expectedFallCount}
+                        title="How many you expect in the autumn"
+                        onSave={(n) =>
+                          api.patch(`/cost-rules/${r.id}`, { expectedFallCount: n }).then(load)
+                        }
+                      />
+                    </td>
+                    <td className="num hide-sm">
+                      <CountField
+                        value={r.expectedSpringCount}
+                        title="How many you expect in the spring"
+                        onSave={(n) =>
+                          api.patch(`/cost-rules/${r.id}`, { expectedSpringCount: n }).then(load)
+                        }
+                      />
+                    </td>
+                    <td className="num">
+                      <strong>
+                        {r.expectedFallCount + r.expectedSpringCount > 0
+                          ? r.expectedFallCount + r.expectedSpringCount
+                          : r.expectedCount}
+                      </strong>
+                    </td>
+                  </>
+                )}
                 <td className="num">
                   <button
                     className="link danger"
@@ -322,6 +346,7 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
 function RenameSeason({ ctx }: { ctx: SeasonContext }) {
   const fallback = `${ctx.season.term.charAt(0).toUpperCase()}${ctx.season.term.slice(1)} ${ctx.season.year}`;
   const [name, setName] = useState(ctx.season.name ?? '');
+  const [spring, setSpring] = useState(ctx.season.springStartsOn ?? '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -329,7 +354,10 @@ function RenameSeason({ ctx }: { ctx: SeasonContext }) {
     setBusy(true);
     setErr(null);
     api
-      .patch(`/seasons/${ctx.season.id}`, { name: name.trim() || null })
+      .patch(`/seasons/${ctx.season.id}`, {
+        name: name.trim() || null,
+        springStartsOn: spring || null,
+      })
       .then(() => ctx.reload())
       .catch((e: Error) => setErr(e.message))
       .finally(() => setBusy(false));
@@ -339,6 +367,15 @@ function RenameSeason({ ctx }: { ctx: SeasonContext }) {
     <div style={{ marginTop: 12 }}>
       {err && <div className="error">{err}</div>}
       <div className="form-row">
+        <div className="field" style={{ width: 190 }}>
+          <label htmlFor="springStarts">Spring starts</label>
+          <input
+            id="springStarts"
+            type="date"
+            value={spring}
+            onChange={(e) => setSpring(e.target.value)}
+          />
+        </div>
         <div className="field" style={{ flex: 1, maxWidth: 320 }}>
           <label htmlFor="seasonName">Name this season</label>
           <input
@@ -353,8 +390,11 @@ function RenameSeason({ ctx }: { ctx: SeasonContext }) {
         </button>
       </div>
       <p className="notice" style={{ marginTop: 0 }}>
-        Shown everywhere instead of <strong>{fallback}</strong> — the season picker, exports and
-        the statements you send parents. Leave it blank to go back to {fallback}.
+        The name is shown everywhere instead of <strong>{fallback}</strong> — the season picker,
+        exports and the statements you send parents; leave it blank to go back. Setting{' '}
+        <strong>spring starts</strong> splits the season in two: everything dated before it counts
+        as fall, everything after as spring, and the Budget page totals each half separately so you
+        can see the fall pays for itself. Leave it blank for one undivided season.
       </p>
     </div>
   );
@@ -781,7 +821,7 @@ function AddCostRule({
         trainerId: trainerId ? Number(trainerId) : null,
         amountCents: cents,
         unit,
-        expectedCount: Math.max(0, Number(expected) || 0),
+        expectedFallCount: Math.max(0, Number(expected) || 0),
       })
       .then(() => {
         setLabel('');
@@ -839,7 +879,7 @@ function AddCostRule({
         </select>
       </div>
       <div className="field" style={{ width: 90 }}>
-        <label>Expected</label>
+        <label>Fall</label>
         <input
           type="number"
           min={0}

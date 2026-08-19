@@ -41,6 +41,7 @@ export type Season = {
   term: 'fall' | 'spring' | 'summer' | 'winter';
   year: number;
   name: string | null;
+  springStartsOn: string | null;
   startDate: string | null;
   endDate: string | null;
   status: 'active' | 'closed';
@@ -64,7 +65,18 @@ export type BudgetLine = {
   label: string;
   amountCents: number;
   source: string;
+  segment?: 'fall' | 'spring' | null;
   paidOn?: string | null;
+};
+
+// Per-half totals, present only when the season has a boundary date set.
+export type SegmentTotals = {
+  segment: 'fall' | 'spring' | 'unassigned';
+  expensesCents: number;
+  creditsCents: number;
+  netDueCents: number;
+  scheduledCents: number;
+  coverageCents: number;
 };
 export type CategoryTotal = { category: string; amountCents: number; lines: BudgetLine[] };
 
@@ -115,6 +127,7 @@ export type SeasonBudget = {
   totalCollectedCents: number;
   totalOutstandingCents: number;
   playerBalances: PlayerBalance[];
+  segments: SegmentTotals[] | null;
 };
 
 export type Trainer = {
@@ -142,6 +155,8 @@ export type CostRule = {
   trainerId: number | null;
   amountCents: number;
   unit: 'per_session' | 'flat';
+  expectedFallCount: number;
+  expectedSpringCount: number;
   expectedCount: number;
   active: boolean;
 };

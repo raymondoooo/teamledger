@@ -163,6 +163,12 @@ hand to next season's treasurer.
 - **Estimates**: say you expect 12 practices before the schedule exists and dues
   can be set in pre-season. The engine bills whichever is higher, your estimate
   or the number actually scheduled, so it never under-collects.
+- **Two halves that each pay for themselves.** Set the date the spring starts
+  and a year-long season splits in two: games, dated costs and instalments sort
+  themselves into fall or spring, expected counts are entered per half, and the
+  budget shows what each half costs against what its own payments raise. An
+  annual total can look healthy while the autumn is quietly funded by money that
+  does not arrive until March; this is the table that catches it.
 - **Tournaments** with name, dates and registration fee, including ones you have
   not booked yet.
 

@@ -231,6 +231,7 @@ api.post(
         term: z.enum(['fall', 'spring', 'summer', 'winter']),
         year: z.number().int(),
         name: z.string().nullish(),
+        springStartsOn: z.string().nullish(),
         startDate: z.string().nullish(),
         endDate: z.string().nullish(),
         firstPaymentCents: money.nullish(),
@@ -441,6 +442,7 @@ api.post(
     const seasonId = idParam.parse(req.params.id);
     const body = z
       .object({
+        segment: z.enum(['fall', 'spring']).nullish(),
         category: z.enum(['training', 'ref_fees', 'tournaments', 'jerseys', 'misc']),
         label: z.string().min(1),
         amountCents: money,
@@ -469,6 +471,7 @@ api.patch(
     }
     const body = z
       .object({
+        segment: z.enum(['fall', 'spring']).nullish(),
         category: z.enum(['training', 'ref_fees', 'tournaments', 'jerseys', 'misc']).optional(),
         label: z.string().min(1).optional(),
         amountCents: money.optional(),
@@ -789,6 +792,8 @@ api.post(
         trainerId: idParam.nullish(),
         amountCents: money,
         unit: z.enum(['per_session', 'flat']).default('per_session'),
+        expectedFallCount: z.number().int().min(0).default(0),
+        expectedSpringCount: z.number().int().min(0).default(0),
         expectedCount: z.number().int().min(0).default(0),
       })
       .parse(req.body);
@@ -812,6 +817,8 @@ api.patch(
         trainerId: idParam.nullish(),
         amountCents: money.optional(),
         unit: z.enum(['per_session', 'flat']).optional(),
+        expectedFallCount: z.number().int().min(0).optional(),
+        expectedSpringCount: z.number().int().min(0).optional(),
         expectedCount: z.number().int().min(0).optional(),
         active: z.boolean().optional(),
       })

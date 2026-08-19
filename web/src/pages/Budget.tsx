@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SeasonContext } from '../App.js';
-import { api, fmt, parseMoney, type BudgetLine, type SeasonBudget } from '../api.js';
+import {
+  api,
+  fmt,
+  parseMoney,
+  type BudgetLine,
+  type SeasonBudget,
+  type SegmentTotals,
+} from '../api.js';
 import TeamMessage from '../TeamMessage.js';
 import { AddSection, Collapsible } from '../ui.js';
 
@@ -167,6 +174,8 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
         </table>
       </AddSection>
 
+      {budget.segments && <SegmentSummary segments={budget.segments} />}
+
       <Collapsible title="Message for the team" hint={<span className="muted">— ready to paste</span>}>
         <TeamMessage team={ctx.team} season={ctx.season} budget={budget} onTeamChange={ctx.reload} />
       </Collapsible>
@@ -210,6 +219,64 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
 
 // Marking an expense paid writes the bank withdrawal. The date is editable
 // because the day a cost is incurred is rarely the day the money leaves.
+// Does each half of the season pay for itself?
+//
+// An annual total can look healthy while the autumn is quietly funded by money
+// that does not arrive until March. This puts the two halves side by side: what
+// each costs, what the instalments falling inside it add up to, and the
+// difference — which is the number the treasurer actually needs before agreeing
+// to a season's worth of referees.
+function SegmentSummary({ segments }: { segments: SegmentTotals[] }) {
+  const NAMES: Record<string, string> = {
+    fall: 'Fall',
+    spring: 'Spring',
+    unassigned: 'Not dated',
+  };
+  return (
+    <>
+      <h2>Does each half cover itself?</h2>
+      <div className="panel table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th />
+              <th className="num">Costs</th>
+              <th className="num hide-sm">Credits</th>
+              <th className="num">To raise</th>
+              <th className="num">Payments due</th>
+              <th className="num">Difference</th>
+            </tr>
+          </thead>
+          <tbody>
+            {segments.map((s) => (
+              <tr key={s.segment}>
+                <td>{NAMES[s.segment] ?? s.segment}</td>
+                <td className="num">{fmt(s.expensesCents)}</td>
+                <td className="num hide-sm">{fmt(s.creditsCents)}</td>
+                <td className="num">{fmt(s.netDueCents)}</td>
+                <td className="num">{fmt(s.scheduledCents)}</td>
+                <td className={`num ${s.coverageCents < 0 ? 'owes' : 'settled'}`}>
+                  {s.coverageCents < 0
+                    ? `${fmt(s.coverageCents)} short`
+                    : s.coverageCents === 0
+                      ? 'covered'
+                      : `${fmt(s.coverageCents)} spare`}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="notice">
+          "Payments due" is what the instalments falling in that half add up to across the whole
+          roster. A half that is short is one you will be paying for out of the other half's money —
+          move an instalment date, or a cost, until both cover themselves. Anything without a date
+          lands under "not dated" rather than being counted toward either.
+        </p>
+      </div>
+    </>
+  );
+}
+
 function PaidCell({
   line,
   onChanged,

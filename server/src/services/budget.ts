@@ -17,6 +17,16 @@ import {
 } from '../db/schema.js';
 import { allocateInstalments, quotedShareCents, splitEvenly } from './money.js';
 import { expectedSessionsFor } from './trainers.js';
+import {
+  expectedCountsFor,
+  expectedSessionsBySegment,
+  segmentOfDate,
+  segmentOfInstant,
+  type Segment,
+} from './segments.js';
+
+// Iterated in this order so the fall lines always print above the spring ones.
+const SEGMENTS = ['fall', 'spring'] as const;
 
 // This module is the only place the spreadsheet's arithmetic lives. Screens,
 // exports and the rollover all read from computeSeasonBudget — nothing
@@ -37,6 +47,8 @@ export type CategoryTotal = {
     label: string;
     amountCents: number;
     source: string;
+    // Which half of the season this line belongs to, when the season is split.
+    segment?: Segment | null;
     paidOn?: string | null;
   }[];
 };
@@ -99,6 +111,22 @@ export type SeasonBudget = {
   totalCollectedCents: number;
   totalOutstandingCents: number;
   playerBalances: PlayerBalance[];
+  // Present only when the season has a boundary date set. Answers the question
+  // an annual budget hides: does each half pay for itself, or is the fall being
+  // funded out of money that will not arrive until the spring?
+  segments: SegmentTotals[] | null;
+};
+
+export type SegmentTotals = {
+  segment: Segment | 'unassigned';
+  expensesCents: number;
+  creditsCents: number;
+  // Expenses less credits — what this half has to raise from players.
+  netDueCents: number;
+  // What the instalments falling in this half add up to across the roster.
+  scheduledCents: number;
+  // Positive = the instalments due in this half cover its costs.
+  coverageCents: number;
 };
 
 // Rewrites the 'derived' expense rows for a season from its cost rules and the
@@ -228,6 +256,14 @@ export async function recalculateDerivedExpenses(seasonId: number): Promise<void
     .delete(expenses)
     .where(and(eq(expenses.seasonId, seasonId), eq(expenses.source, 'derived')));
 
+  // Which half every event falls in, worked out from its own date. A season
+  // with no boundary set is not split at all, and every line stays untagged the
+  // way it was before this existed.
+  const split = Boolean(thisSeason.springStartsOn);
+  const segmentByEvent = new Map<number, Segment | null>(
+    liveEvents.map((e) => [e.id, segmentOfInstant(e.startsAt, thisSeason.springStartsOn)] as const),
+  );
+
   for (const rule of rules) {
     if (rule.unit === 'flat') {
       await db.insert(expenses).values({
@@ -236,34 +272,42 @@ export async function recalculateDerivedExpenses(seasonId: number): Promise<void
         label: rule.label,
         amountCents: rule.amountCents,
         source: 'derived',
+        // A flat, season-long fee belongs to no single half.
+        segment: null,
         ruleId: rule.id,
       });
       continue;
     }
 
     const ruleCharges = freshCharges.filter((c) => c.ruleId === rule.id);
-    // Bill the estimate until the calendar catches up with it. Charges exist
-    // only for events that are really scheduled, so the shortfall is added as a
-    // flat top-up rather than as phantom charges against events that don't
-    // exist yet.
-    const scheduled = ruleCharges.length;
-    const billed = Math.max(scheduled, rule.expectedCount);
-    if (billed === 0) continue;
+    // Bill the estimate until the calendar catches up with it, per half. Charges
+    // exist only for events that are really scheduled, so the shortfall is added
+    // as a flat top-up rather than as phantom charges against events that do not
+    // exist yet. Doing it per half is what lets the fall be checked against the
+    // fall's income rather than the year's.
+    const expected = expectedCountsFor(rule);
+    for (const half of SEGMENTS) {
+      const mine = ruleCharges.filter((c) => segmentByEvent.get(c.eventId) === half);
+      const scheduled = mine.length;
+      const billed = Math.max(scheduled, expected[half]);
+      if (billed === 0) continue;
 
-    const scheduledTotal = ruleCharges.reduce((sum, c) => sum + c.amountCents, 0);
-    const total = scheduledTotal + (billed - scheduled) * rule.amountCents;
-    const label =
-      billed > scheduled
-        ? `${rule.label} (${billed} expected × ${(rule.amountCents / 100).toFixed(2)}, ${scheduled} scheduled)`
-        : `${rule.label} (${billed} × ${(rule.amountCents / 100).toFixed(2)})`;
-    await db.insert(expenses).values({
-      seasonId,
-      category: rule.kind === 'ref_fee' ? 'ref_fees' : 'training',
-      label,
-      amountCents: total,
-      source: 'derived',
-      ruleId: rule.id,
-    });
+      const scheduledTotal = mine.reduce((sum, c) => sum + c.amountCents, 0);
+      const total = scheduledTotal + (billed - scheduled) * rule.amountCents;
+      const rate = (rule.amountCents / 100).toFixed(2);
+      const counts =
+        billed > scheduled ? `${billed} expected × ${rate}, ${scheduled} scheduled` : `${billed} × ${rate}`;
+      await db.insert(expenses).values({
+        seasonId,
+        category: rule.kind === 'ref_fee' ? 'ref_fees' : 'training',
+        // Only says which half when the season actually has two.
+        label: split ? `${rule.label} — ${half} (${counts})` : `${rule.label} (${counts})`,
+        amountCents: total,
+        source: 'derived',
+        segment: split ? half : null,
+        ruleId: rule.id,
+      });
+    }
   }
 
   // Tournaments: one derived line each, so the budget page shows them by name
@@ -278,6 +322,7 @@ export async function recalculateDerivedExpenses(seasonId: number): Promise<void
       seasonId,
       category: 'tournaments',
       label: t.estimated ? `${t.name} (estimated)` : t.name,
+      segment: split ? segmentOfDate(t.startDate, thisSeason.springStartsOn) : null,
       amountCents: t.registrationCents,
       source: 'derived',
       incurredOn: t.startDate,
@@ -289,26 +334,30 @@ export async function recalculateDerivedExpenses(seasonId: number): Promise<void
   // same way rules are.
   for (const [trainerId, trainer] of trainerById) {
     const mine = freshCharges.filter((c) => c.trainerId === trainerId);
-    const scheduled = mine.length;
-    const billed = Math.max(scheduled, expectedSessionsFor(trainer));
-    if (billed === 0) continue;
+    const expected = expectedSessionsBySegment(trainer);
+    for (const half of SEGMENTS) {
+      const half_charges = mine.filter((c) => segmentByEvent.get(c.eventId) === half);
+      const scheduled = half_charges.length;
+      const billed = Math.max(scheduled, expected[half]);
+      if (billed === 0) continue;
 
-    const scheduledTotal = mine.reduce((sum, c) => sum + c.amountCents, 0);
-    const total = scheduledTotal + (billed - scheduled) * trainer.defaultRateCents;
-    // An unpaid volunteer coach still gets attached to events; they just should
-    // not produce a $0 line cluttering the budget.
-    if (total === 0) continue;
-    const rate = (trainer.defaultRateCents / 100).toFixed(2);
-    await db.insert(expenses).values({
-      seasonId,
-      category: 'training',
-      label:
-        billed > scheduled
-          ? `${trainer.name} (${billed} expected × ${rate}, ${scheduled} scheduled)`
-          : `${trainer.name} (${billed} × ${rate})`,
-      amountCents: total,
-      source: 'derived',
-    });
+      const scheduledTotal = half_charges.reduce((sum, c) => sum + c.amountCents, 0);
+      const total = scheduledTotal + (billed - scheduled) * trainer.defaultRateCents;
+      // An unpaid volunteer coach still gets attached to events; they just
+      // should not produce a $0 line cluttering the budget.
+      if (total === 0) continue;
+      const rate = (trainer.defaultRateCents / 100).toFixed(2);
+      const counts =
+        billed > scheduled ? `${billed} expected × ${rate}, ${scheduled} scheduled` : `${billed} × ${rate}`;
+      await db.insert(expenses).values({
+        seasonId,
+        category: 'training',
+        label: split ? `${trainer.name} — ${half} (${counts})` : `${trainer.name} (${counts})`,
+        amountCents: total,
+        source: 'derived',
+        segment: split ? half : null,
+      });
+    }
   }
 }
 
@@ -351,6 +400,7 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
     keyOf: (row: T) => string,
     sourceOf: (row: T) => string,
     paidOf: (row: T) => string | null = () => null,
+    segmentOf: (row: T) => Segment | null = () => null,
   ): CategoryTotal[] => {
     const map = new Map<string, CategoryTotal>();
     for (const row of rows) {
@@ -362,6 +412,7 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
         label: row.label,
         amountCents: row.amountCents,
         source: sourceOf(row),
+        segment: segmentOf(row),
         paidOn: paidOf(row),
       });
       map.set(key, entry);
@@ -374,6 +425,9 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
     (r) => r.category,
     (r) => r.source,
     (r) => r.paidOn,
+    // Falls back to the date it was incurred, so most manual lines land in the
+    // right half without anyone tagging them.
+    (r) => r.segment ?? segmentOfDate(r.incurredOn, season.springStartsOn),
   );
   const creditsByKind = groupBy(
     creditRows,
@@ -472,7 +526,52 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
     totalCollectedCents: paymentRows.reduce((s, p) => s + p.amountCents, 0),
     totalOutstandingCents: playerBalances.reduce((s, p) => s + Math.max(0, p.balanceCents), 0),
     playerBalances,
+    segments: segmentTotals(),
   };
+
+  // Each half's costs against the instalments that fall inside it. Credits are
+  // attributed by the date they arrived; an undated one belongs to no half and
+  // shows under "unassigned" rather than quietly propping up the fall.
+  function segmentTotals(): SegmentTotals[] | null {
+    if (!season.springStartsOn) return null;
+
+    const buckets: Record<string, SegmentTotals> = {};
+    const bucket = (key: Segment | 'unassigned') =>
+      (buckets[key] ??= {
+        segment: key,
+        expensesCents: 0,
+        creditsCents: 0,
+        netDueCents: 0,
+        scheduledCents: 0,
+        coverageCents: 0,
+      });
+
+    for (const e of expenseRows) {
+      // A manual line falls back to the date it was incurred when it has not
+      // been tagged, so most of them classify themselves.
+      const key = e.segment ?? segmentOfDate(e.incurredOn, season.springStartsOn) ?? 'unassigned';
+      bucket(key).expensesCents += e.amountCents;
+    }
+    for (const c of creditRows) {
+      const key = segmentOfDate(c.receivedOn, season.springStartsOn) ?? 'unassigned';
+      bucket(key).creditsCents += c.amountCents;
+    }
+    // What the plan actually asks families for in each half.
+    for (const p of playerBalances) {
+      for (const i of p.installments) {
+        const key = segmentOfDate(i.dueDate, season.springStartsOn) ?? 'unassigned';
+        bucket(key).scheduledCents += i.amountCents;
+      }
+    }
+
+    for (const b of Object.values(buckets)) {
+      b.netDueCents = b.expensesCents - b.creditsCents;
+      b.coverageCents = b.scheduledCents - b.netDueCents;
+    }
+
+    const order: (Segment | 'unassigned')[] = ['fall', 'spring', 'unassigned'];
+    return order.filter((k) => buckets[k]).map((k) => buckets[k]);
+  }
 }
 
 // Ticking an instalment on the roster records exactly that one, and unticking
