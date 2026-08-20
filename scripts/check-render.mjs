@@ -18,7 +18,22 @@ import { chromium } from 'playwright';
 const url = process.argv[2] ?? 'http://localhost:3212';
 const MIN_RENDERED_BYTES = 100;
 
-const browser = await chromium.launch({ args: ['--no-sandbox'] });
+// Launching is its own failure mode, and it must not be reported as a broken
+// app. CI installs the browser without apt-installing system libraries, so if
+// the runner image ever stops shipping the shared objects chromium needs, this
+// is where it shows up — and "the app renders nothing" would send whoever reads
+// it looking through frontend commits for a fault that is not there.
+let browser;
+try {
+  browser = await chromium.launch({ args: ['--no-sandbox'] });
+} catch (err) {
+  console.error(`FAIL: could not start chromium — this is the browser, not the app.`);
+  console.error(err.message);
+  console.error('If a shared library is missing, the runner image changed:');
+  console.error('add `npx playwright install-deps chromium` to the workflow step.');
+  process.exit(1);
+}
+
 const page = await browser.newPage();
 
 const problems = [];

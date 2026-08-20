@@ -350,7 +350,20 @@ jobs:
         run: |
           set -e
           npm i --no-save playwright@1
-          npx playwright install --with-deps chromium
+          # Deliberately not `--with-deps`. That flag shells out to apt-get, and
+          # a stalled Ubuntu mirror sat retrying `Ign: azure.archive.ubuntu.com`
+          # for the whole eight minutes on three consecutive runs — failing main
+          # and both dependabot PRs with what read as a render fault but had
+          # never got as far as opening a browser. A gate that reports the app is
+          # broken when the app is fine is worse than no gate: it trains you to
+          # ignore it.
+          #
+          # Nothing is lost by dropping it. The runner image ships Google Chrome,
+          # so chromium's shared libraries (libnss3, libnspr4, libasound2 and the
+          # rest) are already installed and apt had nothing to add. The browser
+          # binary still comes from Playwright's own CDN, so the engine under
+          # test is unchanged.
+          npx playwright install chromium
           node scripts/check-render.mjs http://localhost:3212
 
       - name: A generated session secret must persist across a restart
