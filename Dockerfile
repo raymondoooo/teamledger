@@ -69,6 +69,22 @@ RUN apk add --no-cache su-exec font-dejavu \
  && cp /usr/share/fonts/dejavu/DejaVuSans.ttf /usr/share/fonts/dejavu/DejaVuSans-Bold.ttf /app/fonts/ \
  && apk del font-dejavu
 
+# npm is a build-time tool. Nothing in this stage runs it: the entrypoint is a
+# shell script, CMD calls `node` directly, and the healthcheck uses wget. It is
+# not free to keep, though — npm vendors its own dependency tree, and a scan of
+# this image reported 1 critical and 7 high entirely from it (tar, brace-
+# expansion, ip-address, picomatch, sigstore). None were in our dependencies,
+# nothing here could reach them, and they were unfixable from this side: the
+# patch only lands when upstream Node bundles a newer npm, so rebuilding changed
+# nothing. A permanent report of unreachable, unfixable findings against every
+# published tag is how you teach yourself to ignore the scanner. Deleting it
+# takes the image to zero at any severity.
+#
+# The build and deps stages keep their npm — this is the runtime stage only. CI
+# asserts npm stays gone, because restoring it is a one-line edit in the wrong
+# FROM block.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 # server/src/index.ts resolves web-dist, and drizzle's migrator resolves
 # ./migrations, relative to process.cwd() — so both sit beside dist/ at the
 # WORKDIR root rather than keeping their in-repo paths.

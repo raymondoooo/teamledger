@@ -1,0 +1,37 @@
+# Scans the image people are actually running, which is a different question
+# from the one dependabot answers. Dependabot watches manifests in this repo: it
+# tells you a dependency has a fix available. This tells you a CVE was disclosed
+# against the published artifact — including everything in the base image that
+# no manifest here mentions.
+#
+# Weekly rather than per-build on purpose. A CVE is disclosed on the world's
+# schedule, not on ours: the image that was clean when it was tagged is the one
+# self-hosters keep running for months, and nothing in a build pipeline would
+# ever look at it again.
+
+name: Vulnerability scan
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Scan the published image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: raymondoooo/teamledger:latest
+          severity: HIGH,CRITICAL
+          # The flag that decides whether this is worth having. Without it the
+          # run goes red for CVEs that have no patch yet — nothing anyone can
+          # act on, every Monday, until the failure means nothing and a real
+          # finding scrolls past with the rest. Fail only on what can be fixed.
+          ignore-unfixed: true
+          exit-code: '1'

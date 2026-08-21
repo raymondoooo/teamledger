@@ -535,6 +535,25 @@ jobs:
           echo "runtime image is clean"
           docker image inspect teamledger:ci --format 'image size: {{.Size}} bytes'
 
+      # npm is deleted from the runtime stage because it vendors its own
+      # dependency tree, and a scan attributed 1 critical and 7 high entirely to
+      # it — none in our dependencies, none reachable, none fixable from here.
+      # Nothing at runtime invokes it: the entrypoint is a shell script, CMD
+      # calls node directly, the healthcheck uses wget.
+      #
+      # Asserted rather than trusted because restoring it is a one-line edit in
+      # the wrong FROM block, and the image would build and run perfectly with
+      # the CVEs quietly back.
+      - name: Runtime image must not ship npm
+        run: |
+          if docker run --rm --entrypoint sh teamledger:ci -c 'command -v npm npx' >/dev/null 2>&1; then
+            echo "FAIL: runtime image still ships npm."
+            echo "It vendors CVEs and nothing in this image runs it — check the"
+            echo "rm -rf did not land in the build or deps stage by mistake."
+            exit 1
+          fi
+          echo "npm is absent from the runtime image"
+
       # ── The image must never carry anyone's books ────────────────────────
       # This is the gate that has to hold. A published image is world-readable
       # forever, so a database, a receipt or a .env that slips into the build
