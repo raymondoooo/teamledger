@@ -817,7 +817,7 @@ jobs:
       # tokens — a password secret may be needed instead of the PAT.
       - name: Sync the Docker Hub description
         continue-on-error: true
-        uses: peter-evans/dockerhub-description@v4
+        uses: peter-evans/dockerhub-description@v5
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           # Docker Hub's description API rejects the ordinary push token with
