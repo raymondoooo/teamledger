@@ -15,6 +15,18 @@ on:
   schedule:
     - cron: '0 8 * * 1'
   workflow_dispatch:
+  # Also immediately after a release, so a newly published image is scanned
+  # against today's CVE feed rather than sitting unexamined for up to a week.
+  # Without this the two halves are unrelated: the scan reports on whatever
+  # :latest happened to be, and a release that fixed a finding leaves Monday
+  # red until Monday comes round.
+  #
+  # workflow_run rather than `push: tags`, which would race: the tag fires both
+  # workflows at once and the scan would read the *previous* :latest, reporting
+  # on the image the release is in the middle of replacing.
+  workflow_run:
+    workflows: ['build, test, publish']
+    types: [completed]
 
 permissions:
   contents: read
@@ -23,6 +35,15 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The publish workflow also runs on every push to main, where it builds and
+    # tests but publishes nothing. Scanning then would re-report an unchanged
+    # image on every commit, which is the noise this workflow exists to avoid —
+    # so only a successful *tag* run counts. head_branch is the tag name for a
+    # tag-triggered run.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
     steps:
       - name: Scan the published image
         uses: aquasecurity/trivy-action@master
