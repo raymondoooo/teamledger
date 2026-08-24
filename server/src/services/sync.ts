@@ -53,6 +53,27 @@ function text(value: unknown): string | null {
   return String(value);
 }
 
+// TeamSnap serves its feeds through Cloudflare with `max-age=14400`, so a plain
+// request gets a copy up to four hours old. That makes "Sync now" a button that
+// convincingly does nothing: the treasurer adds a practice, syncs, sees no
+// practice, and reasonably concludes the import is broken. It was observed
+// serving 10 events while the origin had 11.
+//
+// A request `Cache-Control: no-cache` does not help — Cloudflare ignores it from
+// clients by design. A unique query parameter does, because it changes the edge
+// cache key, and an ICS generator has no reason to care about a parameter it
+// does not read.
+//
+// Applied to scheduled syncs too, not just manual ones. The scheduler's default
+// interval is six hours, which is longer than the TTL, but the two are unrelated
+// numbers — either could be changed by someone who has never heard of the other,
+// and the failure that produces is silently stale money.
+export function cacheBusted(url: string): string {
+  const u = new URL(url);
+  u.searchParams.set('_tl', Date.now().toString(36));
+  return u.toString();
+}
+
 function isCancelled(component: VEvent): boolean {
   const status = (text(component.status) ?? '').toUpperCase();
   if (status === 'CANCELLED') return true;
@@ -204,7 +225,7 @@ export async function syncFeed(feedId: number): Promise<SyncResult> {
     // webcal:// is just https:// with a different scheme hint for calendar
     // clients; node-ical will not fetch it, so normalize before requesting.
     const url = feed.url.replace(/^webcal:\/\//i, 'https://');
-    parsed = await ical.async.fromURL(url);
+    parsed = await ical.async.fromURL(cacheBusted(url));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await db
