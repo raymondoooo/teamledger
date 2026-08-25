@@ -304,10 +304,26 @@ jobs:
           # mid-season still owes for the part they played.
           last2=$(curl -fsS -b /tmp/j "$B/seasons/1/installments" \
             | python3 -c 'import json,sys;r=json.load(sys.stdin);print(",".join(str(x["id"]) for x in r if x["seq"]>2))')
+          # Deliberately not the first player: the step above records a payment
+          # against the last instalment for playerId 1, and skipping an
+          # instalment someone has paid is refused — correctly. Picking a player
+          # with no payments keeps this step testing the pricing rather than
+          # re-testing that guard.
           spid=$(curl -fsS -b /tmp/j "$B/seasons/1/roster" \
-            | python3 -c 'import json,sys;print(json.load(sys.stdin)[0]["seasonPlayerId"])')
+            | python3 -c 'import json,sys;r=[x for x in json.load(sys.stdin) if x["playerId"]!=1];print(r[0]["seasonPlayerId"])')
           curl -fsS -b /tmp/j -X PATCH "$B/season-players/$spid" -H 'Content-Type: application/json' \
             -d "{\"duesOverrideCents\":32900,\"skippedInstallmentIds\":[$last2]}" >/dev/null
+
+          # The other half of that rule: player 1 *has* paid the last instalment,
+          # so taking them off it must be refused rather than orphaning the
+          # money. Money already received cannot be un-scheduled behind its own
+          # payment.
+          spid1=$(curl -fsS -b /tmp/j "$B/seasons/1/roster" \
+            | python3 -c 'import json,sys;print([x for x in json.load(sys.stdin) if x["playerId"]==1][0]["seasonPlayerId"])')
+          code=$(curl -s -o /dev/null -w '%{http_code}' -b /tmp/j -X PATCH "$B/season-players/$spid1" \
+            -H 'Content-Type: application/json' -d "{\"skippedInstallmentIds\":[$last2]}")
+          [ "$code" != "200" ] || { echo "FAIL: skipped an instalment that had a payment"; exit 1; }
+          echo "refuses to skip a paid instalment"
 
           curl -fsS -b /tmp/j -X PATCH "$B/seasons/1" -H 'Content-Type: application/json' \
             -d '{"announcedDuesCents":65800}' >/dev/null
