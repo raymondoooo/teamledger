@@ -1,0 +1,1 @@
+ALTER TABLE `seasons` ADD `announced_dues_cents` integer;

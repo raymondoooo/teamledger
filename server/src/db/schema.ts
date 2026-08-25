@@ -109,6 +109,20 @@ export const seasons = sqliteTable(
     // dated expense or an instalment works out its own half without anyone
     // tagging it. Null means the season is not split and everything is one pot.
     springStartsOn: text('spring_starts_on'),
+    // The price you actually told parents, once you have told them.
+    //
+    // Normally dues are derived: costs ÷ roster, recomputed whenever anything
+    // changes. That is right up until the message goes out, after which the
+    // figure is a promise — and a treasurer who has announced "$164.50 a
+    // payment" cannot have it drift to $168.23 because a player went onto a
+    // reduced rate, or to $162.50 because an estimate came in cheaper.
+    //
+    // Set this and every player without their own override owes exactly it. The
+    // gap between what the roster is billed and what the season actually costs
+    // stops being spread silently across other families and becomes a number on
+    // the Budget page: what the team is covering out of its own funds. Null
+    // keeps the original behaviour, dues that follow the costs.
+    announcedDuesCents: integer('announced_dues_cents'),
     // Set by rollover when the season is closed, so historical seasons keep
     // reporting the numbers they ended with even if a rule is edited later.
     closedAt: integer('closed_at', { mode: 'timestamp' }),

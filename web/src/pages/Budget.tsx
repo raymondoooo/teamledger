@@ -225,8 +225,31 @@ export default function Budget({ ctx }: { ctx: SeasonContext }) {
               <td>Due per player</td>
               <td className="num">{fmt(budget.quotedPerPlayerCents)}</td>
             </tr>
+            {/* Only when a price has been announced. On a derived split this is
+                always zero by construction, and a permanent $0.00 row would be
+                one more number to scan past. */}
+            {budget.coveredByTeamCents !== 0 && (
+              <tr>
+                <td className={budget.coveredByTeamCents > 0 ? 'owes' : undefined}>
+                  {budget.coveredByTeamCents > 0
+                    ? 'Covered from team funds'
+                    : 'Surplus over the announced price'}
+                </td>
+                <td className={`num ${budget.coveredByTeamCents > 0 ? 'owes' : 'settled'}`}>
+                  {fmt(Math.abs(budget.coveredByTeamCents))}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
+        {budget.coveredByTeamCents > 0 && (
+          <p className="notice">
+            Dues are held at the price you announced, so the roster is billed{' '}
+            {fmt(budget.coveredByTeamCents)} less than the season costs. That difference comes out
+            of team funds — reserves, fundraising, whatever is in the account. Clear the announced
+            figure in Settings to go back to dues that follow the costs.
+          </p>
+        )}
         <PlanNote budget={budget} />
       </div>
     </>

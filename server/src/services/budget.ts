@@ -109,6 +109,12 @@ export type SeasonBudget = {
   // The single number quoted to parents. Rounded up; the exact per-player
   // splits in `playerBalances` are what actually sum to netDueCents.
   quotedPerPlayerCents: number;
+  // What the team is covering out of its own funds because the announced price
+  // does not meet the season's cost. Positive = team funds are making up the
+  // difference; negative = the price collects a surplus. Zero unless dues have
+  // been announced, and the line that keeps the books balancing:
+  //   sum(dues) + player fundraising + coveredByTeamCents == netDue
+  coveredByTeamCents: number;
   // Fundraising attributed to individual players. Money the team has received,
   // so it reduces what is left to collect in cash without being split evenly.
   totalPlayerRaisedCents: number;
@@ -480,7 +486,31 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
   const overrideRoster = roster.filter((r) => r.duesOverrideCents !== null);
   const splitRoster = roster.filter((r) => r.duesOverrideCents === null);
   const overrideTotal = overrideRoster.reduce((s, r) => s + (r.duesOverrideCents ?? 0), 0);
-  const shares = splitEvenly(netDueCents - overrideTotal, splitRoster.length);
+
+  // Two ways to price a season.
+  //
+  // Derived (announcedDuesCents null) is the original: whatever the season
+  // costs, divided across whoever is not on an override, recomputed every time
+  // anything moves. Right while the budget is still being worked out.
+  //
+  // Announced is what a treasurer needs the moment the message goes out. The
+  // figure is fixed, everyone without an override pays exactly it, and the
+  // difference between that and the real cost is carried by the team rather
+  // than redistributed onto other families — which is the whole point, since
+  // redistributing it is exactly what makes an announced price drift.
+  const announced = season.announcedDuesCents;
+  const shares =
+    announced === null
+      ? splitEvenly(netDueCents - overrideTotal, splitRoster.length)
+      : new Array<number>(splitRoster.length).fill(announced);
+
+  // What the team is absorbing: the gap between the season's cost and what the
+  // roster is actually being billed. Positive means team funds are covering it;
+  // negative means the announced price collects more than the season needs.
+  // Always zero on a derived split, because there the roster is billed the
+  // whole cost by construction.
+  const billedTotal = overrideTotal + shares.reduce((s, v) => s + v, 0);
+  const coveredByTeamCents = netDueCents - billedTotal;
 
   const shareByPlayer = new Map<number, number>();
   splitRoster.forEach((r, i) => shareByPlayer.set(r.playerId, shares[i] ?? 0));
@@ -570,7 +600,12 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
     creditsByKind,
     totalCreditsCents,
     netDueCents,
-    quotedPerPlayerCents: quotedShareCents(netDueCents, roster.length),
+    // The single figure quoted to parents. Once announced, it *is* the quote —
+    // rounding up a derived share made sense when the number was still being
+    // worked out, but here the treasurer has already said it out loud.
+    quotedPerPlayerCents:
+      season.announcedDuesCents ?? quotedShareCents(netDueCents, roster.length),
+    coveredByTeamCents,
     totalPlayerRaisedCents: playerCreditRows.reduce((s, c) => s + c.amountCents, 0),
     totalCollectedCents: paymentRows.reduce((s, p) => s + p.amountCents, 0),
     totalOutstandingCents: playerBalances.reduce((s, p) => s + Math.max(0, p.balanceCents), 0),

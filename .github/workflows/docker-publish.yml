@@ -286,6 +286,71 @@ jobs:
           [ "$code" != "200" ] || { echo "FAIL: dropped an instalment that had a payment"; exit 1; }
           echo "refuses to delete a paid instalment"
 
+      # Two ways a season can be priced, and the invariant that has to hold in
+      # both: every cent the season costs is either billed to somebody or shown
+      # as covered by the team. Derived dues follow the costs; announced dues
+      # hold the price the treasurer already told parents, and the difference
+      # becomes a visible number instead of quietly raising everyone's payment.
+      - name: An announced price must hold, and the books must still balance
+        run: |
+          set -e
+          B=http://localhost:3212/api
+          # Back to four even payments so the figures below are clean.
+          curl -fsS -b /tmp/j -X PUT "$B/seasons/1/installments" \
+            -H 'Content-Type: application/json' -d '{"installments":[{},{},{},{}]}' >/dev/null
+
+          # Put one player on a reduced rate and take them off the last two
+          # payments, which is the case this exists for: a kid who leaves
+          # mid-season still owes for the part they played.
+          last2=$(curl -fsS -b /tmp/j "$B/seasons/1/installments" \
+            | python3 -c 'import json,sys;r=json.load(sys.stdin);print(",".join(str(x["id"]) for x in r if x["seq"]>2))')
+          spid=$(curl -fsS -b /tmp/j "$B/seasons/1/roster" \
+            | python3 -c 'import json,sys;print(json.load(sys.stdin)[0]["seasonPlayerId"])')
+          curl -fsS -b /tmp/j -X PATCH "$B/season-players/$spid" -H 'Content-Type: application/json' \
+            -d "{\"duesOverrideCents\":32900,\"skippedInstallmentIds\":[$last2]}" >/dev/null
+
+          curl -fsS -b /tmp/j -X PATCH "$B/seasons/1" -H 'Content-Type: application/json' \
+            -d '{"announcedDuesCents":65800}' >/dev/null
+          curl -fsS -b /tmp/j "$B/seasons/1/budget" > /tmp/ann.json
+          python3 - <<'PY'
+          import json
+          b = json.load(open('/tmp/ann.json'))
+          assert b['quotedPerPlayerCents'] == 65800, b['quotedPerPlayerCents']
+
+          plain = [p for p in b['playerBalances'] if not p['hasOverride']]
+          assert plain, 'no plain players to check'
+          for p in plain:
+              assert p['duesCents'] == 65800, (p['name'], p['duesCents'])
+              # The announced figure must reach the payment amounts, not just
+              # the headline: 65800 over four dates is 16450 each.
+              amounts = [i['amountCents'] for i in p['installments'] if not i['skipped']]
+              assert amounts == [16450] * 4, (p['name'], amounts)
+
+          hurt = [p for p in b['playerBalances'] if p['hasOverride']][0]
+          kept = [i for i in hurt['installments'] if not i['skipped']]
+          assert len(kept) == 2, kept
+          assert sum(i['amountCents'] for i in kept) == hurt['duesCents'] == 32900, kept
+
+          billed = sum(p['duesCents'] for p in b['playerBalances'])
+          assert billed + b['coveredByTeamCents'] == b['netDueCents'], (
+              billed, b['coveredByTeamCents'], b['netDueCents'])
+          print(f"announced price holds; team covers {b['coveredByTeamCents']} cents and the books balance")
+          PY
+
+          # Clearing it must return to dues that follow the costs, with the
+          # roster billed the whole amount again.
+          curl -fsS -b /tmp/j -X PATCH "$B/seasons/1" -H 'Content-Type: application/json' \
+            -d '{"announcedDuesCents":null}' >/dev/null
+          curl -fsS -b /tmp/j "$B/seasons/1/budget" > /tmp/derived.json
+          python3 - <<'PY'
+          import json
+          b = json.load(open('/tmp/derived.json'))
+          assert b['coveredByTeamCents'] == 0, b['coveredByTeamCents']
+          billed = sum(p['duesCents'] for p in b['playerBalances'])
+          assert billed == b['netDueCents'], (billed, b['netDueCents'])
+          print("clearing the announced price returns to a derived split")
+          PY
+
       - name: Exports must generate
         run: |
           set -e

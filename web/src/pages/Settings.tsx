@@ -317,6 +317,8 @@ export default function Settings({ ctx }: { ctx: SeasonContext }) {
         }
       >
         <div className="panel">
+          <AnnouncedDues ctx={ctx} />
+          <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '16px 0' }} />
           <PaymentPlan ctx={ctx} />
         </div>
       </Collapsible>
@@ -935,6 +937,85 @@ function AddFeed({ seasonId, onAdded }: { seasonId: number; onAdded: () => void 
       </div>
       <button type="submit">Add feed</button>
       {error && <span className="owes" style={{ fontSize: 13 }}>{error}</span>}
+    </form>
+  );
+}
+
+// Pinning the price after it has been announced.
+//
+// Dues normally follow the costs, which is right while the budget is being put
+// together and wrong the moment the message goes out — after that the figure is
+// a promise. Without this, a player moving onto a reduced rate silently raises
+// everyone else's payment, because their shortfall is redistributed across the
+// roster. That is the correct default and the wrong behaviour once parents have
+// been told a number.
+function AnnouncedDues({ ctx }: { ctx: SeasonContext }) {
+  const current = ctx.season.announcedDuesCents;
+  const [value, setValue] = useState(current === null ? '' : (current / 100).toFixed(2));
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+
+  const save = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cents = value.trim() === '' ? null : parseMoney(value);
+    if (value.trim() !== '' && cents === null) return setStatus('Enter an amount or leave blank');
+    setBusy(true);
+    setStatus(null);
+    api
+      .patch(`/seasons/${ctx.season.id}`, { announcedDuesCents: cents })
+      .then(() => {
+        setStatus(cents === null ? 'Dues follow the costs again.' : 'Saved.');
+        ctx.reload();
+      })
+      .catch((err: Error) => setStatus(err.message))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <form onSubmit={save}>
+      <p className="notice" style={{ marginTop: 0 }}>
+        <strong>Announced dues.</strong> Leave blank and dues follow the costs — every change to
+        the budget moves what each player owes. Set an amount once you have told parents a price:
+        everyone without their own override then owes exactly that, and if the season costs more
+        than the roster is billed, the Budget page shows the difference as coming out of team
+        funds rather than raising everyone else's payment.
+      </p>
+      <div className="form-row">
+        <div className="field" style={{ width: 150 }}>
+          <label htmlFor="announced">Dues per player</label>
+          <input
+            id="announced"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="follow the costs"
+          />
+        </div>
+        <button type="submit" disabled={busy}>
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+        {current !== null && (
+          <button
+            type="button"
+            className="link"
+            disabled={busy}
+            onClick={() => {
+              setValue('');
+              setBusy(true);
+              api
+                .patch(`/seasons/${ctx.season.id}`, { announcedDuesCents: null })
+                .then(() => {
+                  setStatus('Dues follow the costs again.');
+                  ctx.reload();
+                })
+                .catch((err: Error) => setStatus(err.message))
+                .finally(() => setBusy(false));
+            }}
+          >
+            Clear
+          </button>
+        )}
+        {status && <span className="muted" style={{ fontSize: 13 }}>{status}</span>}
+      </div>
     </form>
   );
 }

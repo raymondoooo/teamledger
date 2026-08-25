@@ -62,6 +62,7 @@ const budget: SeasonBudget = {
   totalCreditsCents: 0,
   netDueCents: 300000,
   quotedPerPlayerCents: 27167,
+  coveredByTeamCents: 0,
   totalPlayerRaisedCents: 0,
   totalCollectedCents: 90000,
   totalOutstandingCents: 73002,

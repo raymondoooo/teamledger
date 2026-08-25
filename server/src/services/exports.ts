@@ -134,6 +134,15 @@ export function budgetCsv(budget: SeasonBudget): string {
   rows.push(['Total', 'Credits', '', csvMoney(budget.totalCreditsCents), '']);
   rows.push(['Total', 'Net due from team', '', csvMoney(budget.netDueCents), '']);
   rows.push(['Total', 'Per player', '', csvMoney(budget.quotedPerPlayerCents), '']);
+  if (budget.coveredByTeamCents !== 0) {
+    rows.push([
+      'Total',
+      budget.coveredByTeamCents > 0 ? 'Covered from team funds' : 'Surplus over announced price',
+      '',
+      csvMoney(Math.abs(budget.coveredByTeamCents)),
+      '',
+    ]);
+  }
   return toCsv(['Type', 'Category', 'Label', 'Amount', 'Source'], rows);
 }
 
@@ -279,6 +288,15 @@ export async function budgetPdf(budget: SeasonBudget, meta: PdfMeta): Promise<Bu
   moneyRow(doc, 'Total Expenses minus Credits', formatCents(budget.netDueCents), { bold: true });
   moneyRow(doc, `Players rostered`, String(budget.rosterCount));
   moneyRow(doc, 'Total Due Per Player', formatCents(budget.quotedPerPlayerCents), { bold: true });
+  // Without this the sheet does not add up: the roster is billed less than the
+  // season costs, deliberately, and the gap is team money rather than an error.
+  if (budget.coveredByTeamCents !== 0) {
+    moneyRow(
+      doc,
+      budget.coveredByTeamCents > 0 ? 'Covered From Team Funds' : 'Surplus Over Announced Price',
+      formatCents(Math.abs(budget.coveredByTeamCents)),
+    );
+  }
   if (budget.totalPlayerRaisedCents !== 0) {
     moneyRow(doc, 'Player fundraising (credited individually)', formatCents(budget.totalPlayerRaisedCents));
   }
@@ -379,6 +397,18 @@ export async function budgetSheetPdf(budget: SeasonBudget, meta: PdfMeta): Promi
   doc.moveDown(0.4);
 
   moneyRow(doc, 'Total due per player', formatCents(budget.quotedPerPlayerCents), { bold: true });
+
+  // Only when dues have been announced and the price does not meet cost. This
+  // is the figure that stops the summary looking like it does not add up: the
+  // roster is billed less than the season costs, on purpose, and the gap is
+  // team money.
+  if (budget.coveredByTeamCents !== 0) {
+    moneyRow(
+      doc,
+      budget.coveredByTeamCents > 0 ? 'Covered from team funds' : 'Surplus over announced price',
+      formatCents(Math.abs(budget.coveredByTeamCents)),
+    );
+  }
 
   // The instalment split, taken from a real roster line so it reflects whatever
   // the season is actually configured to do rather than being recomputed here.

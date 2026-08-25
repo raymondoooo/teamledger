@@ -42,6 +42,8 @@ export type Season = {
   year: number;
   name: string | null;
   springStartsOn: string | null;
+  // The price you told parents. Null = dues follow the costs.
+  announcedDuesCents: number | null;
   startDate: string | null;
   endDate: string | null;
   status: 'active' | 'closed';
@@ -126,6 +128,9 @@ export type SeasonBudget = {
   totalCreditsCents: number;
   netDueCents: number;
   quotedPerPlayerCents: number;
+  // What the team is absorbing because the announced price does not meet cost.
+  // Positive = team funds cover the gap; negative = the price runs a surplus.
+  coveredByTeamCents: number;
   totalPlayerRaisedCents: number;
   totalCollectedCents: number;
   totalOutstandingCents: number;
