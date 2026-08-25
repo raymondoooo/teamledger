@@ -66,8 +66,14 @@ function coversList(budget: SeasonBudget): string {
 // without an override keeps the quoted figures the ones most of the team will
 // recognise on their own statement.
 function planFor(budget: SeasonBudget) {
-  const standard = budget.playerBalances.find((p) => !p.hasOverride) ?? budget.playerBalances[0];
-  return standard?.installments ?? [];
+  // Someone on the standard rate *and* the whole plan. This message is posted to
+  // the entire team, so quoting a player who is sitting out the spring would
+  // announce two payments to a squad that owes four.
+  const standard =
+    budget.playerBalances.find((p) => !p.hasOverride && !p.installments.some((i) => i.skipped)) ??
+    budget.playerBalances.find((p) => !p.hasOverride) ??
+    budget.playerBalances[0];
+  return (standard?.installments ?? []).filter((i) => !i.skipped);
 }
 
 function compose(kind: Kind, team: Team, season: Season, budget: SeasonBudget): string {

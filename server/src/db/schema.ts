@@ -187,6 +187,37 @@ export const seasonPlayers = sqliteTable(
   (t) => [uniqueIndex('season_players_season_player_idx').on(t.seasonId, t.playerId)],
 );
 
+// Instalments one player is not on. A kid hurt in December still owes for the
+// autumn he played, so his dues are overridden to the autumn figure — but that
+// figure spread over all four payment dates would keep billing his family into
+// the spring for a season he is not part of. Skipping the spring rows collects
+// the same total on the dates that make sense.
+//
+// A row here means "not on this plan", which is different from an instalment
+// that happens to compute to zero: the statement omits it rather than showing
+// $0.00 due, and the roster's paid tick-boxes do not count it as outstanding.
+//
+// Deliberately a join table rather than a column on season_players. Both ends
+// cascade, so deleting a season, dropping a player from the roster, or
+// shortening the payment plan cannot leave a skip pointing at a row that no
+// longer exists — which as a list of ids in a text column it certainly would.
+export const seasonPlayerSkips = sqliteTable(
+  'season_player_skips',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    seasonPlayerId: integer('season_player_id')
+      .notNull()
+      .references(() => seasonPlayers.id, { onDelete: 'cascade' }),
+    installmentId: integer('installment_id')
+      .notNull()
+      .references(() => seasonInstallments.id, { onDelete: 'cascade' }),
+    createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(now),
+  },
+  (t) => [
+    uniqueIndex('season_player_skips_player_installment_idx').on(t.seasonPlayerId, t.installmentId),
+  ],
+);
+
 export const trainers = sqliteTable('trainers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   teamId: integer('team_id')

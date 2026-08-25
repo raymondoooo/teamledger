@@ -132,4 +132,30 @@ describe('allocateInstalments', () => {
   it('is empty for a season with no instalments', () => {
     expect(allocateInstalments(60834, [])).toEqual([]);
   });
+
+  // Skipping is implemented by handing this function only the instalments the
+  // player is on, so the behaviour that matters is that the surviving rows still
+  // add up to the whole debt. The failure to guard against is the intuitive one
+  // — dropping two of four payments quietly collecting half the money.
+  describe('with instalments skipped', () => {
+    it('collects the full amount over the remaining dates', () => {
+      // Out for the spring: the autumn two carry the whole (already reduced)
+      // bill rather than each staying at a quarter of it.
+      const parts = allocateInstalments(42167, [null, null]);
+      expect(parts).toEqual([21084, 21083]);
+      expect(parts.reduce((a, b) => a + b, 0)).toBe(42167);
+    });
+
+    it('still honours a pinned amount among the survivors', () => {
+      const parts = allocateInstalments(42167, [15000, null]);
+      expect(parts).toEqual([15000, 27167]);
+      expect(parts.reduce((a, b) => a + b, 0)).toBe(42167);
+    });
+
+    it('leaves nothing scheduled when every instalment is skipped', () => {
+      // The dues do not vanish — balanceCents is computed from dues, not from
+      // the plan — but there is no date attached to them any more.
+      expect(allocateInstalments(42167, [])).toEqual([]);
+    });
+  });
 });

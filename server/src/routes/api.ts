@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
@@ -25,6 +25,7 @@ import {
   playerCredits,
   players,
   seasonInstallments,
+  seasonPlayerSkips,
   seasonPlayers,
   seasons,
   teams,
@@ -425,14 +426,76 @@ api.patch(
         size: z.string().nullish(),
         duesOverrideCents: money.nullish(),
         carriedBalanceCents: money.optional(),
+        // Which instalments this player is not on. Absent means "leave the
+        // current set alone"; an empty array means "put them back on all of
+        // them" — the distinction matters because the dues override and the
+        // skips are saved from the same form, and a partial PATCH must not
+        // silently clear one while setting the other.
+        skippedInstallmentIds: z.array(idParam).optional(),
       })
       .parse(req.body);
-    const [row] = await db
-      .update(seasonPlayers)
-      .set(body)
-      .where(eq(seasonPlayers.id, id))
-      .returning();
-    res.json(row);
+
+    const { skippedInstallmentIds, ...columns } = body;
+
+    if (Object.keys(columns).length > 0) {
+      await db.update(seasonPlayers).set(columns).where(eq(seasonPlayers.id, id));
+    }
+
+    if (skippedInstallmentIds !== undefined) {
+      const [member] = await db.select().from(seasonPlayers).where(eq(seasonPlayers.id, id));
+      if (!member) throw new Error('player is not on this season roster');
+
+      const wanted = [...new Set(skippedInstallmentIds)];
+      if (wanted.length > 0) {
+        // An instalment id from another season would otherwise be accepted and
+        // then never match anything, so the skip would look saved and do
+        // nothing at all.
+        const valid = await db
+          .select({ id: seasonInstallments.id })
+          .from(seasonInstallments)
+          .where(
+            and(
+              eq(seasonInstallments.seasonId, member.seasonId),
+              inArray(seasonInstallments.id, wanted),
+            ),
+          );
+        if (valid.length !== wanted.length) {
+          throw new Error('that instalment does not belong to this player’s season');
+        }
+
+        // Same rule the plan editor enforces when dropping a row: a payment
+        // recorded against an instalment pins it. Taking the player off it
+        // would leave their money attached to a payment they are not on, and
+        // the plan would stop summing to what they owe.
+        const paid = await db
+          .select({ installmentId: payments.installmentId })
+          .from(payments)
+          .where(and(eq(payments.playerId, member.playerId), eq(payments.seasonId, member.seasonId)));
+        const clash = paid
+          .map((p) => p.installmentId)
+          .filter((pid): pid is number => pid !== null && wanted.includes(pid));
+        if (clash.length > 0) {
+          throw new Error(
+            'a payment has already been recorded against an instalment you are skipping — ' +
+              'delete that payment first',
+          );
+        }
+      }
+
+      await db.delete(seasonPlayerSkips).where(eq(seasonPlayerSkips.seasonPlayerId, id));
+      if (wanted.length > 0) {
+        await db
+          .insert(seasonPlayerSkips)
+          .values(wanted.map((installmentId) => ({ seasonPlayerId: id, installmentId })));
+      }
+    }
+
+    const [row] = await db.select().from(seasonPlayers).where(eq(seasonPlayers.id, id));
+    const skips = await db
+      .select({ installmentId: seasonPlayerSkips.installmentId })
+      .from(seasonPlayerSkips)
+      .where(eq(seasonPlayerSkips.seasonPlayerId, id));
+    res.json({ ...row, skippedInstallmentIds: skips.map((s) => s.installmentId) });
   }),
 );
 

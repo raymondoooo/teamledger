@@ -10,6 +10,7 @@ import {
   playerCredits,
   players,
   seasonInstallments,
+  seasonPlayerSkips,
   seasonPlayers,
   seasons,
   tournaments,
@@ -82,6 +83,9 @@ export type PlayerBalance = {
     dueDate: string | null;
     amountCents: number;
     paid: boolean;
+    // Not on this player's plan at all. Distinct from an amount of zero: the
+    // statement omits it rather than printing $0.00 due.
+    skipped: boolean;
   }[];
   payments: {
     id: number;
@@ -406,6 +410,26 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
     .from(playerCredits)
     .where(eq(playerCredits.seasonId, seasonId));
 
+  // Instalments individual players are not on. Joined through season_players so
+  // one query covers the roster; keyed by season player id because that is what
+  // a skip belongs to — the same person in a different season is a different
+  // row with its own plan.
+  const skipRows = await db
+    .select({
+      seasonPlayerId: seasonPlayerSkips.seasonPlayerId,
+      installmentId: seasonPlayerSkips.installmentId,
+    })
+    .from(seasonPlayerSkips)
+    .innerJoin(seasonPlayers, eq(seasonPlayerSkips.seasonPlayerId, seasonPlayers.id))
+    .where(eq(seasonPlayers.seasonId, seasonId));
+
+  const skipsByPlayer = new Map<number, Set<number>>();
+  for (const row of skipRows) {
+    const set = skipsByPlayer.get(row.seasonPlayerId) ?? new Set<number>();
+    set.add(row.installmentId);
+    skipsByPlayer.set(row.seasonPlayerId, set);
+  }
+
   const groupBy = <T extends { amountCents: number; label: string; id: number }>(
     rows: T[],
     keyOf: (row: T) => string,
@@ -478,10 +502,20 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
       .sort((a, b) => a.paidAt.localeCompare(b.paidAt));
     const paidCents = mine.reduce((s, p) => s + p.amountCents, 0);
 
-    const parts = allocateInstalments(
+    // Their dues are spread over the instalments they are actually on, so the
+    // parts still sum to exactly what they owe — a player who skips the spring
+    // pays the same total, on the autumn dates, rather than a reduced total.
+    // Skipping every instalment leaves them with no schedule; the amount still
+    // shows in balanceCents, which is computed from dues and not from the plan,
+    // so the debt is never quietly lost.
+    const skipped = skipsByPlayer.get(r.seasonPlayerId) ?? new Set<number>();
+    const active = planRows.filter((row) => !skipped.has(row.id));
+    const activeParts = allocateInstalments(
       duesCents,
-      planRows.map((i) => i.amountCents),
+      active.map((i) => i.amountCents),
     );
+    const partByInstallment = new Map<number, number>();
+    active.forEach((row, i) => partByInstallment.set(row.id, activeParts[i] ?? 0));
     const settled = new Set(mine.map((p) => p.installmentId).filter((id): id is number => id !== null));
 
     return {
@@ -504,13 +538,17 @@ export async function computeSeasonBudget(seasonId: number): Promise<SeasonBudge
       hasOverride: r.duesOverrideCents !== null,
       paidCents,
       balanceCents: duesCents - paidCents,
-      installments: planRows.map((row, i) => ({
+      // Every instalment is still listed, skipped ones included, so a screen can
+      // show "not on this plan" rather than silently dropping a row the
+      // treasurer would then look for.
+      installments: planRows.map((row) => ({
         id: row.id,
         seq: row.seq,
         label: row.label,
         dueDate: row.dueDate,
-        amountCents: parts[i] ?? 0,
+        amountCents: partByInstallment.get(row.id) ?? 0,
         paid: settled.has(row.id),
+        skipped: skipped.has(row.id),
       })),
       payments: mine.map((p) => ({
         id: p.id,

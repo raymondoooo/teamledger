@@ -202,7 +202,11 @@ function InstallmentCell({
   onToggle: (playerId: number, installmentId: number, paid: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const plan = player.installments;
+  // Skipped instalments are not part of this player's plan, so they must not
+  // count towards "2 of 4" — a kid on the autumn only is fully paid at 2 of 2,
+  // and showing 2 of 4 would keep them looking permanently in arrears.
+  const plan = player.installments.filter((i) => !i.skipped);
+  const skipped = player.installments.filter((i) => i.skipped);
   const done = plan.filter((i) => i.paid).length;
   const all = done === plan.length && plan.length > 0;
 
@@ -232,6 +236,18 @@ function InstallmentCell({
               <span style={{ flex: 1 }}>{i.label?.trim() || `Payment ${i.seq}`}</span>
               <span className="num muted">{fmt(i.amountCents)}</span>
             </label>
+          ))}
+          {skipped.map((i) => (
+            <div
+              key={i.id}
+              className="muted"
+              style={{ display: 'flex', gap: 8, padding: '2px 0 2px 24px', fontSize: 13 }}
+            >
+              <span style={{ flex: 1, textDecoration: 'line-through' }}>
+                {i.label?.trim() || `Payment ${i.seq}`}
+              </span>
+              <span>skipped</span>
+            </div>
           ))}
         </div>
       )}

@@ -11,7 +11,17 @@ import * as schema from './schema.js';
 // and that the two money-critical CHECK constraints are real. None of it is
 // obvious from the schema, and all of it changed when the database did.
 
-const { teams, seasons, players, seasonPlayers, expenses, costRules, events } = schema;
+const {
+  teams,
+  seasons,
+  players,
+  seasonPlayers,
+  seasonInstallments,
+  seasonPlayerSkips,
+  expenses,
+  costRules,
+  events,
+} = schema;
 
 let db: ReturnType<typeof drizzle<typeof schema>>;
 
@@ -87,6 +97,48 @@ describe('cascade delete', () => {
     expect(await db.select().from(seasons)).toHaveLength(0);
     expect(await db.select().from(players)).toHaveLength(0);
     void season;
+  });
+});
+
+// A skip points at two parents. Either disappearing must take it with them, or
+// the budget would try to skip an instalment that no longer exists — and since
+// the skip is what decides where a player's dues land, a stale one silently
+// misallocates money rather than merely dangling.
+describe('instalment skips cascade from both ends', () => {
+  async function withSkip() {
+    const { team, season } = await makeSeason();
+    const [player] = await db.insert(players).values({ teamId: team.id, name: 'Ada' }).returning();
+    const [member] = await db
+      .insert(seasonPlayers)
+      .values({ seasonId: season.id, playerId: player.id })
+      .returning();
+    const [part] = await db
+      .insert(seasonInstallments)
+      .values({ seasonId: season.id, seq: 1 })
+      .returning();
+    await db
+      .insert(seasonPlayerSkips)
+      .values({ seasonPlayerId: member.id, installmentId: part.id });
+    return { season, member, part };
+  }
+
+  it('goes when the instalment is dropped from the plan', async () => {
+    const { part } = await withSkip();
+    await db.delete(seasonInstallments).where(eq(seasonInstallments.id, part.id));
+    expect(await db.select().from(seasonPlayerSkips)).toHaveLength(0);
+  });
+
+  it('goes when the player leaves the roster', async () => {
+    const { member } = await withSkip();
+    await db.delete(seasonPlayers).where(eq(seasonPlayers.id, member.id));
+    expect(await db.select().from(seasonPlayerSkips)).toHaveLength(0);
+  });
+
+  it('refuses the same skip twice', async () => {
+    const { member, part } = await withSkip();
+    await expect(
+      db.insert(seasonPlayerSkips).values({ seasonPlayerId: member.id, installmentId: part.id }),
+    ).rejects.toThrow();
   });
 });
 

@@ -382,9 +382,14 @@ export async function budgetSheetPdf(budget: SeasonBudget, meta: PdfMeta): Promi
 
   // The instalment split, taken from a real roster line so it reflects whatever
   // the season is actually configured to do rather than being recomputed here.
-  const sample = budget.playerBalances[0];
+  // Prefer someone on the full plan: this is the team-wide summary, and a player
+  // sitting out the spring would otherwise make the season look like it collects
+  // in two payments rather than four.
+  const sample =
+    budget.playerBalances.find((p) => !p.installments.some((i) => i.skipped)) ??
+    budget.playerBalances[0];
   for (const part of sample?.installments ?? []) {
-    if (part.amountCents <= 0) continue;
+    if (part.skipped || part.amountCents <= 0) continue;
     const due = part.dueDate ? ` (due ${part.dueDate})` : '';
     moneyRow(doc, `${part.label?.trim() || `Payment ${part.seq}`}${due}`, formatCents(part.amountCents));
   }
@@ -466,7 +471,10 @@ export async function playerStatementPdf(
 
   // The plan as it applies to this player — their own amounts, not the team's,
   // since an override or a carried balance changes every figure.
-  const plan = (player.installments ?? []).filter((i) => i.amountCents > 0);
+  // Skipped instalments are left off entirely rather than printed as $0.00 —
+  // this statement goes to a parent, and a spring date on the page of a kid who
+  // is out for the spring reads as a bill they still have to pay.
+  const plan = (player.installments ?? []).filter((i) => !i.skipped && i.amountCents > 0);
   if (owing && plan.length > 1) {
     doc.moveDown(0.5);
     doc.font(FONT.regular).fontSize(9).fillColor('#444');

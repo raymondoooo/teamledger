@@ -102,6 +102,9 @@ export type PlayerBalance = {
     dueDate: string | null;
     amountCents: number;
     paid: boolean;
+    // This player is not on this instalment — a kid who leaves at Christmas
+    // still owes for the autumn, but not on the spring dates.
+    skipped: boolean;
   }[];
   payments: {
     id: number;

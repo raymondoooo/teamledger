@@ -118,11 +118,16 @@ export default function PlayerDetail({ ctx }: { ctx: SeasonContext }) {
               player.installments.map((i) => (
                 <tr key={i.id}>
                   <td className="muted">
-                    {i.label?.trim() || `Payment ${i.seq}`}
-                    {i.dueDate ? ` — due ${i.dueDate}` : ''}
+                    <span style={{ textDecoration: i.skipped ? 'line-through' : undefined }}>
+                      {i.label?.trim() || `Payment ${i.seq}`}
+                      {i.dueDate ? ` — due ${i.dueDate}` : ''}
+                    </span>
                     {i.paid ? ' (paid)' : ''}
                   </td>
-                  <td className="num muted">{fmt(i.amountCents)}</td>
+                  {/* A skipped row shows "skipped", not $0.00 — the amount is
+                      genuinely zero, but reading it as a zero bill rather than
+                      an absent one is the mistake worth preventing. */}
+                  <td className="num muted">{i.skipped ? 'skipped' : fmt(i.amountCents)}</td>
                 </tr>
               ))}
           </tbody>
@@ -545,17 +550,33 @@ function AddFundraising({
 
 function DuesOverride({ player, onSaved }: { player: PlayerBalance; onSaved: () => void }) {
   const [value, setValue] = useState(player.hasOverride ? (player.shareCents / 100).toFixed(2) : '');
+  // Which instalments this player is *on*. Held as the inverse of what the
+  // server stores because that is the question the form asks — ticked means
+  // "they pay this one", which is the state a treasurer expects to start from.
+  const [on, setOn] = useState<Set<number>>(
+    () => new Set(player.installments.filter((i) => !i.skipped).map((i) => i.id)),
+  );
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const plan = player.installments;
+  const hasPlan = plan.length > 1;
+  const skipped = plan.filter((i) => !on.has(i.id));
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
     const cents = value.trim() === '' ? null : parseMoney(value);
     if (value.trim() !== '' && cents === null) return setError('Enter an amount or leave blank');
     setError(null);
+    setBusy(true);
     api
-      .patch(`/season-players/${player.seasonPlayerId}`, { duesOverrideCents: cents })
+      .patch(`/season-players/${player.seasonPlayerId}`, {
+        duesOverrideCents: cents,
+        skippedInstallmentIds: skipped.map((i) => i.id),
+      })
       .then(onSaved)
-      .catch((err: Error) => setError(err.message));
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setBusy(false));
   };
 
   return (
@@ -569,9 +590,57 @@ function DuesOverride({ player, onSaved }: { player: PlayerBalance; onSaved: () 
           <label>Fixed dues</label>
           <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="even split" />
         </div>
-        <button type="submit">Save</button>
+        <button className="primary" type="submit" disabled={busy}>
+          {busy ? 'Saving…' : 'Save'}
+        </button>
         {error && <span className="owes" style={{ fontSize: 13 }}>{error}</span>}
       </div>
+
+      {hasPlan && (
+        <>
+          <p className="notice" style={{ marginBottom: 4 }}>
+            Which payments they are on. Untick the ones they should skip — a player who leaves at
+            Christmas still owes for the autumn, but not on the spring dates. What they owe is
+            spread across the ticked payments only, so the total stays the same.
+          </p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', marginBottom: 8 }}>
+            {plan.map((i) => (
+              <label key={i.id} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input
+                  type="checkbox"
+                  checked={on.has(i.id)}
+                  disabled={busy}
+                  onChange={(e) =>
+                    setOn((prev) => {
+                      const next = new Set(prev);
+                      if (e.target.checked) next.add(i.id);
+                      else next.delete(i.id);
+                      return next;
+                    })
+                  }
+                />
+                <span style={{ textDecoration: on.has(i.id) ? undefined : 'line-through' }}>
+                  {i.label?.trim() || `Payment ${i.seq}`}
+                  {i.dueDate ? ` — ${i.dueDate}` : ''}
+                </span>
+              </label>
+            ))}
+          </div>
+          {skipped.length === plan.length && (
+            <p className="notice owes">
+              Every payment is unticked, so this player has no due dates. Anything they still owe
+              stays on their balance — it just is not scheduled. Set their dues to 0 if they owe
+              nothing at all.
+            </p>
+          )}
+          {plan.some((i) => i.paid && !on.has(i.id)) && (
+            <p className="notice owes">
+              One of the unticked payments already has money recorded against it. Delete that
+              payment first, or leave it ticked — saving will be refused.
+            </p>
+          )}
+        </>
+      )}
     </form>
   );
 }
