@@ -64,7 +64,14 @@ LABEL org.opencontainers.image.title="teamledger" \
 # only, so any name outside Latin-1 — Łukasz, Ольга, 李 — rendered as mojibake
 # in a document emailed to a parent, with no error to show for it. Only the two
 # faces actually used are kept; the full package is ~10MB.
-RUN apk add --no-cache su-exec font-dejavu \
+# `apk upgrade` first: the base node:22-alpine tag on Docker Hub only gets
+# rebuilt on its own schedule, so a patched Alpine package (openssl, say) can
+# sit in Alpine's own repo for days before the floating tag we pull picks it
+# up. Pulling the current package index at build time instead of waiting on
+# that rebuild is what keeps the weekly vulnerability scan from reporting a fix
+# that has existed upstream the whole time.
+RUN apk upgrade --no-cache \
+ && apk add --no-cache su-exec font-dejavu \
  && mkdir -p /app/fonts \
  && cp /usr/share/fonts/dejavu/DejaVuSans.ttf /usr/share/fonts/dejavu/DejaVuSans-Bold.ttf /app/fonts/ \
  && apk del font-dejavu
