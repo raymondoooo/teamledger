@@ -263,6 +263,31 @@ export type TrainerLedgerRow = {
   payments: { id: number; paidOn: string; amountCents: number; method: string; note: string | null }[];
 };
 
+export type RefLedgerRow = {
+  ruleId: number;
+  label: string;
+  rateCents: number;
+  completedSessions: number;
+  scheduledSessions: number;
+  billedSessions: number;
+  earnedToDateCents: number;
+  forecastCents: number;
+  paidCents: number;
+  owedCents: number;
+  payments: { id: number; paidOn: string; amountCents: number; method: string; note: string | null }[];
+};
+
+export type TreasurerAdvance = {
+  id: number;
+  seasonId: number;
+  label: string;
+  amountCents: number;
+  paidOn: string;
+  reimbursedOn: string | null;
+  bankTransactionId: number | null;
+  note: string | null;
+};
+
 export type RosterRow = {
   seasonPlayerId: number;
   playerId: number;

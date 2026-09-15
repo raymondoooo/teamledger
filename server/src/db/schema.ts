@@ -33,11 +33,14 @@ const PAYMENT_METHOD = ['venmo', 'cash', 'zelle', 'check', 'other'] as const;
 // row it meant.
 const INSTALLMENT = ['first', 'final', 'other'] as const;
 
-// What a bank line represents. The first three are written by the app when you
-// mark payments transferred or pay a trainer; the rest are hand-entered.
+// What a bank line represents. The first few are written by the app when you
+// mark payments transferred, pay a trainer or ref, or reimburse yourself; the
+// rest are hand-entered.
 const BANK_TXN_KIND = [
   'player_transfer',
   'trainer_payment',
+  'ref_payment',
+  'advance_reimbursement',
   'expense_payment',
   'deposit',
   'withdrawal',
@@ -563,5 +566,53 @@ export const trainerPayments = sqliteTable('trainer_payments', {
   bankTransactionId: integer('bank_transaction_id').references(() => bankTransactions.id, {
     onDelete: 'set null',
   }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(now),
+});
+
+// Money paid out to a referee. A ref fee has no trainer row to hang a ledger
+// off — the league sends whoever it sends — so instead of a person this is
+// keyed to the cost_rule ("Referee — $75/game") that bills for it. Otherwise
+// this is trainerPayments' twin: what has actually left the account, against
+// what the schedule says has been earned.
+export const refPayments = sqliteTable('ref_payments', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  seasonId: integer('season_id')
+    .notNull()
+    .references(() => seasons.id, { onDelete: 'cascade' }),
+  ruleId: integer('rule_id')
+    .notNull()
+    .references(() => costRules.id, { onDelete: 'cascade' }),
+  paidOn: text('paid_on').notNull(),
+  amountCents: integer('amount_cents').notNull(),
+  method: text('method', { enum: PAYMENT_METHOD }).notNull().default('venmo'),
+  note: text('note'),
+  bankTransactionId: integer('bank_transaction_id').references(() => bankTransactions.id, {
+    onDelete: 'set null',
+  }),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(now),
+});
+
+// Money the treasurer spent out of their own pocket on the team's behalf — a
+// ref paid cash at the field, jerseys picked up on a personal card — that the
+// team account still owes back. Deliberately not a bank transaction by itself:
+// the team's balance has not actually moved yet, only the treasurer's own
+// money has, so recording one here changes nothing on the ledger until it is
+// reimbursed. `reimbursedOn` null is the "still owed to you" state; the mirror
+// image of `payments.transferredOn` being null.
+export const treasurerAdvances = sqliteTable('treasurer_advances', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  seasonId: integer('season_id')
+    .notNull()
+    .references(() => seasons.id, { onDelete: 'cascade' }),
+  label: text('label').notNull(),
+  amountCents: integer('amount_cents').notNull(),
+  paidOn: text('paid_on').notNull(),
+  reimbursedOn: text('reimbursed_on'),
+  // The withdrawal this created when reimbursed, so undoing it removes the
+  // bank line rather than leaving an orphan.
+  bankTransactionId: integer('bank_transaction_id').references(() => bankTransactions.id, {
+    onDelete: 'set null',
+  }),
+  note: text('note'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(now),
 });

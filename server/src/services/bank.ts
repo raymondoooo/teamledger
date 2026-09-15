@@ -3,17 +3,33 @@ import { db } from '../db/index.js';
 import {
   bankAccounts,
   bankTransactions,
+  costRules,
   eventCharges,
   events,
   payments,
   players,
   expenses,
+  refPayments,
   seasons,
   tournaments,
   trainerPayments,
   trainers,
+  treasurerAdvances,
 } from '../db/schema.js';
+import { expectedCountsFor } from './segments.js';
 import { expectedSessionsFor } from './trainers.js';
+
+// A session counts as "done" for payables purposes once its calendar day has
+// arrived, not once its exact kickoff time has passed. A treasurer paying a
+// ref or coach in person does it on game day — often before the whistle blows
+// — so an event scheduled for today has to be owed today, not tomorrow once
+// the clock catches up to it.
+function calendarDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+function hasArrived(startsAt: Date, asOf: Date): boolean {
+  return calendarDay(startsAt) <= calendarDay(asOf);
+}
 
 // The team's real bank account, and the two things that make it disagree with
 // the payment ledger if you do not track them:
@@ -240,7 +256,7 @@ export async function trainerLedger(
     // Only what has already taken place counts as owed.
     const completed = mine.filter((c) => {
       const event = eventById.get(c.eventId);
-      return event && !event.cancelled && event.startsAt <= asOf;
+      return event && !event.cancelled && hasArrived(event.startsAt, asOf);
     });
     const completedSessions = completed.length;
     const earnedToDateCents =
@@ -285,6 +301,229 @@ export async function trainerLedger(
       })),
     };
   });
+}
+
+export type RefLedgerRow = {
+  ruleId: number;
+  label: string;
+  rateCents: number;
+  completedSessions: number;
+  scheduledSessions: number;
+  billedSessions: number;
+  earnedToDateCents: number;
+  forecastCents: number;
+  paidCents: number;
+  owedCents: number;
+  payments: { id: number; paidOn: string; amountCents: number; method: string; note: string | null }[];
+};
+
+// trainerLedger's twin for ref fees. There is no trainer row to key this off —
+// the league assigns whoever shows up — so the payee here is the cost_rule
+// itself ("Referee — $75/game") rather than a person, and each of its events'
+// charges stands in for a session.
+export async function refLedger(seasonId: number, asOf: Date = new Date()): Promise<RefLedgerRow[]> {
+  const rules = await db
+    .select()
+    .from(costRules)
+    .where(and(eq(costRules.seasonId, seasonId), eq(costRules.kind, 'ref_fee'), eq(costRules.active, true)));
+
+  const seasonEvents = await db.select().from(events).where(eq(events.seasonId, seasonId));
+  const eventIds = seasonEvents.map((e) => e.id);
+  const charges = eventIds.length
+    ? await db.select().from(eventCharges).where(inArray(eventCharges.eventId, eventIds))
+    : [];
+
+  const paid = await db.select().from(refPayments).where(eq(refPayments.seasonId, seasonId));
+
+  const eventById = new Map(seasonEvents.map((e) => [e.id, e] as const));
+
+  return rules.map((rule) => {
+    const mine = charges.filter((c) => c.ruleId === rule.id);
+    const scheduledSessions = mine.length;
+
+    const completed = mine.filter((c) => {
+      const event = eventById.get(c.eventId);
+      return event && !event.cancelled && hasArrived(event.startsAt, asOf);
+    });
+    const completedSessions = completed.length;
+    const earnedToDateCents =
+      rule.unit === 'flat'
+        ? completedSessions > 0
+          ? rule.amountCents
+          : 0
+        : completed.reduce((s, c) => s + c.amountCents, 0);
+
+    const expected = expectedCountsFor(rule);
+    const billedSessions =
+      rule.unit === 'flat' ? 1 : Math.max(scheduledSessions, expected.fall + expected.spring);
+    const scheduledTotal = mine.reduce((s, c) => s + c.amountCents, 0);
+    const forecastCents =
+      rule.unit === 'flat'
+        ? rule.amountCents
+        : scheduledTotal + (billedSessions - scheduledSessions) * rule.amountCents;
+
+    const myPayments = paid
+      .filter((p) => p.ruleId === rule.id)
+      .sort((a, b) => a.paidOn.localeCompare(b.paidOn));
+    const paidCents = myPayments.reduce((s, p) => s + p.amountCents, 0);
+
+    return {
+      ruleId: rule.id,
+      label: rule.label,
+      rateCents: rule.amountCents,
+      completedSessions,
+      scheduledSessions,
+      billedSessions,
+      earnedToDateCents,
+      forecastCents,
+      paidCents,
+      owedCents: earnedToDateCents - paidCents,
+      payments: myPayments.map((p) => ({
+        id: p.id,
+        paidOn: p.paidOn,
+        amountCents: p.amountCents,
+        method: p.method,
+        note: p.note,
+      })),
+    };
+  });
+}
+
+// Records a payment to a ref-fee rule and the matching withdrawal.
+export async function payRef(input: {
+  seasonId: number;
+  ruleId: number;
+  paidOn: string;
+  amountCents: number;
+  method: 'venmo' | 'cash' | 'zelle' | 'check' | 'other';
+  note?: string | null;
+}) {
+  const [season] = await db.select().from(seasons).where(eq(seasons.id, input.seasonId));
+  if (!season) throw new Error('season not found');
+  const [rule] = await db.select().from(costRules).where(eq(costRules.id, input.ruleId));
+  if (!rule) throw new Error('cost rule not found');
+
+  const account = await getOrCreateAccount(season.teamId);
+
+  const [txn] = await db
+    .insert(bankTransactions)
+    .values({
+      accountId: account.id,
+      seasonId: input.seasonId,
+      occurredOn: input.paidOn,
+      description: `${rule.label} — ref fee`,
+      amountCents: -Math.abs(input.amountCents),
+      kind: 'ref_payment',
+      note: input.note ?? null,
+    })
+    .returning();
+
+  const [row] = await db
+    .insert(refPayments)
+    .values({
+      seasonId: input.seasonId,
+      ruleId: input.ruleId,
+      paidOn: input.paidOn,
+      amountCents: Math.abs(input.amountCents),
+      method: input.method,
+      note: input.note ?? null,
+      bankTransactionId: txn.id,
+    })
+    .returning();
+
+  return row;
+}
+
+export async function deleteRefPayment(id: number) {
+  const [row] = await db.select().from(refPayments).where(eq(refPayments.id, id));
+  if (!row) throw new Error('ref payment not found');
+  await db.delete(refPayments).where(eq(refPayments.id, id));
+  if (row.bankTransactionId) {
+    await db.delete(bankTransactions).where(eq(bankTransactions.id, row.bankTransactionId));
+  }
+}
+
+// Records money the treasurer spent personally on the team's behalf. Writes no
+// bank line — the team account has not moved yet, only the treasurer's own —
+// so it changes nothing on the ledger until reimburseAdvance is called.
+export async function recordAdvance(input: {
+  seasonId: number;
+  label: string;
+  amountCents: number;
+  paidOn: string;
+  note?: string | null;
+}) {
+  const [row] = await db
+    .insert(treasurerAdvances)
+    .values({
+      seasonId: input.seasonId,
+      label: input.label,
+      amountCents: input.amountCents,
+      paidOn: input.paidOn,
+      note: input.note ?? null,
+    })
+    .returning();
+  return row;
+}
+
+export async function listAdvances(seasonId: number) {
+  return db
+    .select()
+    .from(treasurerAdvances)
+    .where(eq(treasurerAdvances.seasonId, seasonId))
+    .orderBy(asc(treasurerAdvances.paidOn));
+}
+
+// Pays the treasurer back out of the team account, writing the withdrawal that
+// the advance itself deliberately did not.
+export async function reimburseAdvance(id: number, paidOn: string) {
+  const [advance] = await db.select().from(treasurerAdvances).where(eq(treasurerAdvances.id, id));
+  if (!advance) throw new Error('advance not found');
+  const [season] = await db.select().from(seasons).where(eq(seasons.id, advance.seasonId));
+  if (!season) throw new Error('season not found');
+
+  const account = await getOrCreateAccount(season.teamId);
+  const [txn] = await db
+    .insert(bankTransactions)
+    .values({
+      accountId: account.id,
+      seasonId: advance.seasonId,
+      occurredOn: paidOn,
+      description: `${advance.label} — reimbursement`,
+      amountCents: -Math.abs(advance.amountCents),
+      kind: 'advance_reimbursement',
+    })
+    .returning();
+
+  const [row] = await db
+    .update(treasurerAdvances)
+    .set({ reimbursedOn: paidOn, bankTransactionId: txn.id })
+    .where(eq(treasurerAdvances.id, id))
+    .returning();
+  return row;
+}
+
+export async function unreimburseAdvance(id: number) {
+  const [advance] = await db.select().from(treasurerAdvances).where(eq(treasurerAdvances.id, id));
+  if (!advance) throw new Error('advance not found');
+  if (advance.bankTransactionId) {
+    await db.delete(bankTransactions).where(eq(bankTransactions.id, advance.bankTransactionId));
+  }
+  const [row] = await db
+    .update(treasurerAdvances)
+    .set({ reimbursedOn: null, bankTransactionId: null })
+    .where(eq(treasurerAdvances.id, id))
+    .returning();
+  return row;
+}
+
+export async function deleteAdvance(id: number) {
+  const [row] = await db.select().from(treasurerAdvances).where(eq(treasurerAdvances.id, id));
+  if (!row) throw new Error('advance not found');
+  await db.delete(treasurerAdvances).where(eq(treasurerAdvances.id, id));
+  if (row.bankTransactionId) {
+    await db.delete(bankTransactions).where(eq(bankTransactions.id, row.bankTransactionId));
+  }
 }
 
 // Records a payment to a trainer and the matching withdrawal, so paying someone

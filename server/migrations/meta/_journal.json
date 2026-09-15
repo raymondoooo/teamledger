@@ -57,6 +57,13 @@
       "when": 1787701306171,
       "tag": "0007_hot_maximus",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1789478405754,
+      "tag": "0008_fast_warhawk",
+      "breakpoints": true
     }
   ]
 }

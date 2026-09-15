@@ -5,10 +5,12 @@ import {
   fmt,
   parseMoney,
   type BankLedger,
+  type RefLedgerRow,
   type TrainerLedgerRow,
+  type TreasurerAdvance,
   type UntransferredPayment,
 } from '../api.js';
-import { AddSection, Collapsible } from '../ui.js';
+import { AddSection, Collapsible, PayableRow } from '../ui.js';
 
 // The ledger book, replacing the paper one. Three questions it answers:
 // what is in the account, what is still sitting in the treasurer's own Venmo,
@@ -17,6 +19,8 @@ export default function Bank({ ctx }: { ctx: SeasonContext }) {
   const [ledger, setLedger] = useState<BankLedger | null>(null);
   const [held, setHeld] = useState<UntransferredPayment[]>([]);
   const [trainerRows, setTrainerRows] = useState<TrainerLedgerRow[]>([]);
+  const [refRows, setRefRows] = useState<RefLedgerRow[]>([]);
+  const [advances, setAdvances] = useState<TreasurerAdvance[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -24,11 +28,15 @@ export default function Bank({ ctx }: { ctx: SeasonContext }) {
       api.get<BankLedger>(`/teams/${ctx.team.id}/bank`),
       api.get<UntransferredPayment[]>(`/teams/${ctx.team.id}/untransferred`),
       api.get<TrainerLedgerRow[]>(`/seasons/${ctx.season.id}/trainer-ledger`),
+      api.get<RefLedgerRow[]>(`/seasons/${ctx.season.id}/ref-ledger`),
+      api.get<TreasurerAdvance[]>(`/seasons/${ctx.season.id}/advances`),
     ])
-      .then(([l, u, t]) => {
+      .then(([l, u, t, r, a]) => {
         setLedger(l);
         setHeld(u);
         setTrainerRows(t);
+        setRefRows(r);
+        setAdvances(a);
       })
       .catch((err: Error) => setError(err.message));
   }, [ctx.team.id, ctx.season.id]);
@@ -41,6 +49,10 @@ export default function Bank({ ctx }: { ctx: SeasonContext }) {
   // Only work already done counts as owed — a practice three weeks out is not a
   // debt, and showing it as one would make the account look emptier than it is.
   const owedToTrainers = trainerRows.reduce((s, t) => s + Math.max(0, t.owedCents), 0);
+  const owedToRefs = refRows.reduce((s, r) => s + Math.max(0, r.owedCents), 0);
+  const owedToYou = advances
+    .filter((a) => a.reimbursedOn === null)
+    .reduce((s, a) => s + a.amountCents, 0);
 
   return (
     <>
@@ -59,15 +71,30 @@ export default function Bank({ ctx }: { ctx: SeasonContext }) {
           </div>
         </div>
         <div className="stat">
-          <div className="label">Owed to trainers now</div>
-          <div className="value" style={{ color: owedToTrainers > 0 ? 'var(--danger)' : undefined }}>
-            {fmt(owedToTrainers)}
+          <div className="label">Owed to trainers &amp; refs now</div>
+          <div
+            className="value"
+            style={{ color: owedToTrainers + owedToRefs > 0 ? 'var(--danger)' : undefined }}
+          >
+            {fmt(owedToTrainers + owedToRefs)}
           </div>
         </div>
         <div className="stat">
-          <div className="label">After clearing both</div>
+          <div className="label">Owed to you</div>
+          <div className="value" style={{ color: owedToYou > 0 ? 'var(--danger)' : undefined }}>
+            {fmt(owedToYou)}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="label">After clearing all of it</div>
           <div className="value">
-            {fmt(ledger.balanceCents + ledger.untransferredCents - owedToTrainers)}
+            {fmt(
+              ledger.balanceCents +
+                ledger.untransferredCents -
+                owedToTrainers -
+                owedToRefs -
+                owedToYou,
+            )}
           </div>
         </div>
       </div>
@@ -160,7 +187,11 @@ export default function Bank({ ctx }: { ctx: SeasonContext }) {
                           ? ' The payments it covered will go back to untransferred.'
                           : l.kind === 'trainer_payment'
                             ? ' The trainer payment stays recorded — delete it from the Trainers table instead.'
-                            : '';
+                            : l.kind === 'ref_payment'
+                              ? ' The ref payment stays recorded — delete it from the Referees table instead.'
+                              : l.kind === 'advance_reimbursement'
+                                ? ' The advance goes back to unreimbursed instead of being deleted.'
+                                : '';
                       if (confirm(`Delete "${l.description}"?${extra}`)) {
                         api
                           .del(`/bank/transactions/${l.id}`)
@@ -219,12 +250,98 @@ export default function Bank({ ctx }: { ctx: SeasonContext }) {
               <tr><td colSpan={7} className="muted">No trainers on this team.</td></tr>
             )}
             {trainerRows.map((t) => (
-              <TrainerRow key={t.trainerId} row={t} seasonId={ctx.season.id} onChanged={load} />
+              <PayableRow
+                key={t.trainerId}
+                label={t.name}
+                completedSessions={t.completedSessions}
+                billedSessions={t.billedSessions}
+                earnedToDateCents={t.earnedToDateCents}
+                paidCents={t.paidCents}
+                owedCents={t.owedCents}
+                forecastCents={t.forecastCents}
+                payments={t.payments}
+                payUrl={`/seasons/${ctx.season.id}/trainer-payments`}
+                deletePrefix="/trainer-payments"
+                extraFields={{ trainerId: t.trainerId }}
+                onChanged={load}
+              />
             ))}
           </tbody>
         </table>
       </div>
       </Collapsible>
+
+      <Collapsible
+        title="Referees"
+        open={owedToRefs > 0}
+        hint={
+          owedToRefs > 0 ? (
+            <span className="owes">— {fmt(owedToRefs)} owed</span>
+          ) : (
+            <span className="muted">— all settled</span>
+          )
+        }
+      >
+      <div className="panel table-wrap">
+        <p className="notice" style={{ marginTop: 0 }}>
+          There is no single "ref" to name — the league sends whoever it sends — so each ref-fee
+          rule from Settings is its own payee here. Paying cash at the game? Log it as{' '}
+          <a href="#money-owed-to-you">money owed to you</a> instead, so it also tracks that you
+          need it back.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Ref-fee rule</th>
+              <th className="num hide-sm">Done</th>
+              <th className="num hide-sm">Earned so far</th>
+              <th className="num hide-sm">Paid</th>
+              <th className="num">Owed now</th>
+              <th className="num hide-sm">Season forecast</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {refRows.length === 0 && (
+              <tr><td colSpan={7} className="muted">No ref-fee rules on this season.</td></tr>
+            )}
+            {refRows.map((r) => (
+              <PayableRow
+                key={r.ruleId}
+                label={r.label}
+                completedSessions={r.completedSessions}
+                billedSessions={r.billedSessions}
+                earnedToDateCents={r.earnedToDateCents}
+                paidCents={r.paidCents}
+                owedCents={r.owedCents}
+                forecastCents={r.forecastCents}
+                payments={r.payments}
+                payUrl={`/seasons/${ctx.season.id}/ref-payments`}
+                deletePrefix="/ref-payments"
+                extraFields={{ ruleId: r.ruleId }}
+                onChanged={load}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      </Collapsible>
+
+      <div id="money-owed-to-you">
+        <Collapsible
+          title="Money owed to you"
+          open={owedToYou > 0}
+          hint={
+            owedToYou > 0 ? (
+              <span className="owes">— {fmt(owedToYou)} owed</span>
+            ) : (
+              <span className="muted">— nothing outstanding</span>
+            )
+          }
+        >
+          <Advances seasonId={ctx.season.id} advances={advances} onChanged={load} />
+        </Collapsible>
+      </div>
 
       <Collapsible title="Account settings" hint={<span className="muted">— name and starting balance</span>}>
         <div className="panel">
@@ -325,122 +442,154 @@ function Transfers({
   );
 }
 
-function TrainerRow({
-  row,
+// Money the treasurer has fronted personally — a ref paid cash at the field, a
+// jersey order on a personal card — and still needs back from the team. Adding
+// one writes no bank line; the team account has not moved yet, only the
+// treasurer's own money has. Reimbursing it is what actually withdraws it.
+function Advances({
   seasonId,
+  advances,
   onChanged,
 }: {
-  row: TrainerLedgerRow;
   seasonId: number;
+  advances: TreasurerAdvance[];
   onChanged: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [label, setLabel] = useState('');
   const [amount, setAmount] = useState('');
   const [paidOn, setPaidOn] = useState(new Date().toISOString().slice(0, 10));
-  const [method, setMethod] = useState('venmo');
+  const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const pay = (e: React.FormEvent) => {
+  const outstanding = advances.filter((a) => a.reimbursedOn === null);
+  const settled = advances.filter((a) => a.reimbursedOn !== null);
+
+  const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const cents = parseMoney(amount);
     if (cents === null) return setError('Enter an amount');
+    if (!label.trim()) return setError('Enter what this was for');
     setError(null);
     api
-      .post(`/seasons/${seasonId}/trainer-payments`, {
-        trainerId: row.trainerId,
-        paidOn,
-        amountCents: cents,
-        method,
-      })
+      .post(`/seasons/${seasonId}/advances`, { label, amountCents: cents, paidOn, note: note || null })
       .then(() => {
+        setLabel('');
         setAmount('');
-        setOpen(false);
+        setNote('');
+        setAdding(false);
         onChanged();
       })
       .catch((err: Error) => setError(err.message));
   };
 
+  const reimburse = (id: number) => {
+    const on = prompt('Reimbursed on what date?', new Date().toISOString().slice(0, 10));
+    if (on === null) return;
+    api.post(`/advances/${id}/reimburse`, { paidOn: on }).then(onChanged).catch((err: Error) => setError(err.message));
+  };
+
   return (
-    <>
-      <tr>
-        <td>{row.name}</td>
-        <td className="num muted hide-sm">
-          {row.completedSessions}
-          <span className="derived"> of {row.billedSessions}</span>
-        </td>
-        <td className="num hide-sm">{fmt(row.earnedToDateCents)}</td>
-        <td className="num hide-sm">{fmt(row.paidCents)}</td>
-        <td className={`num ${row.owedCents > 0 ? 'owes' : row.owedCents < 0 ? 'overpaid' : 'settled'}`}>
-          {fmt(row.owedCents)}
-        </td>
-        <td className="num muted hide-sm">{fmt(row.forecastCents)}</td>
-        <td className="num">
-          <button className="link" onClick={() => setOpen((o) => !o)}>
-            {open ? 'Cancel' : 'Pay'}
-          </button>
-        </td>
-      </tr>
-      {row.payments.length > 0 && (
-        <tr>
-          <td />
-          <td colSpan={6}>
-            {row.payments.map((p) => (
-              <div key={p.id} className="muted" style={{ fontSize: 13 }}>
-                {p.paidOn} — {fmt(p.amountCents)} ({p.method})
+    <div className="panel table-wrap">
+      <p className="notice" style={{ marginTop: 0 }}>
+        Log what you spent from your own money on the team's behalf. It shows up as owed to you
+        until you record the team paying you back — that withdrawal is what actually moves the
+        account balance.
+      </p>
+      {error && <div className="error">{error}</div>}
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>What for</th>
+            <th className="num">Amount</th>
+            <th className="hide-sm">Status</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {advances.length === 0 && (
+            <tr><td colSpan={5} className="muted">Nothing logged yet.</td></tr>
+          )}
+          {outstanding.map((a) => (
+            <tr key={a.id}>
+              <td className="muted">{a.paidOn}</td>
+              <td>
+                {a.label}
+                {a.note && <div className="muted" style={{ fontSize: 12 }}>{a.note}</div>}
+              </td>
+              <td className="num owes">{fmt(a.amountCents)}</td>
+              <td className="hide-sm muted">Owed to you</td>
+              <td className="num">
+                <button className="link" onClick={() => reimburse(a.id)}>Mark reimbursed</button>
                 <button
                   className="link danger"
-                  onClick={() =>
-                    confirm('Delete this trainer payment and its bank line?') &&
-                    api.del(`/trainer-payments/${p.id}`).then(onChanged)
-                  }
+                  onClick={() => confirm('Delete this?') && api.del(`/advances/${a.id}`).then(onChanged)}
                 >
-                  remove
+                  Delete
                 </button>
-              </div>
-            ))}
-          </td>
-        </tr>
-      )}
-      {open && (
-        <tr>
-          <td colSpan={7}>
-            <form className="form-row" onSubmit={pay}>
-              <div className="field">
-                <label>Date</label>
-                <input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
-              </div>
-              <div className="field" style={{ width: 110 }}>
-                <label>Amount</label>
-                <input
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder={(Math.max(0, row.owedCents) / 100).toFixed(2)}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Method</label>
-                <select value={method} onChange={(e) => setMethod(e.target.value)}>
-                  {['venmo', 'cash', 'zelle', 'check', 'other'].map((m) => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              </div>
-              <button className="primary" type="submit">Record payment</button>
-              {row.owedCents > 0 && (
+              </td>
+            </tr>
+          ))}
+          {settled.map((a) => (
+            <tr key={a.id}>
+              <td className="muted">{a.paidOn}</td>
+              <td>
+                {a.label}
+                {a.note && <div className="muted" style={{ fontSize: 12 }}>{a.note}</div>}
+              </td>
+              <td className="num settled">{fmt(a.amountCents)}</td>
+              <td className="hide-sm muted">Reimbursed {a.reimbursedOn}</td>
+              <td className="num">
                 <button
-                  type="button"
-                  onClick={() => setAmount((row.owedCents / 100).toFixed(2))}
+                  className="link"
+                  onClick={() => api.post(`/advances/${a.id}/unreimburse`).then(onChanged)}
                 >
-                  Pay all {fmt(row.owedCents)}
+                  Undo
                 </button>
-              )}
-              {error && <span className="owes" style={{ fontSize: 13 }}>{error}</span>}
-            </form>
-          </td>
-        </tr>
+                <button
+                  className="link danger"
+                  onClick={() => confirm('Delete this?') && api.del(`/advances/${a.id}`).then(onChanged)}
+                >
+                  Delete
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {adding ? (
+        <form className="form-row" onSubmit={submit} style={{ marginTop: 12 }}>
+          <div className="field">
+            <label>Date</label>
+            <input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
+          </div>
+          <div className="field" style={{ flex: 1, minWidth: 160 }}>
+            <label>What for</label>
+            <input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Ref fee, paid cash"
+              required
+            />
+          </div>
+          <div className="field" style={{ width: 110 }}>
+            <label>Amount</label>
+            <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="75.00" required />
+          </div>
+          <div className="field" style={{ flex: 1, minWidth: 140 }}>
+            <label>Note</label>
+            <input value={note} onChange={(e) => setNote(e.target.value)} />
+          </div>
+          <button className="primary" type="submit">Log it</button>
+          <button type="button" onClick={() => setAdding(false)}>Cancel</button>
+        </form>
+      ) : (
+        <button className="primary" style={{ marginTop: 12 }} onClick={() => setAdding(true)}>
+          + I paid for something
+        </button>
       )}
-    </>
+    </div>
   );
 }
 

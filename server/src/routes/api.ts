@@ -31,6 +31,7 @@ import {
   teams,
   tournaments,
   trainers,
+  treasurerAdvances,
 } from '../db/schema.js';
 import {
   computeSeasonBudget,
@@ -49,17 +50,25 @@ import {
   rosterCsv,
 } from '../services/exports.js';
 import {
+  deleteAdvance,
+  deleteRefPayment,
   deleteTrainerPayment,
   getLedger,
+  listAdvances,
   markExpensePaid,
   markExpenseUnpaid,
   markTournamentPaid,
   markTournamentUnpaid,
   getOrCreateAccount,
+  payRef,
   payTrainer,
+  recordAdvance,
+  refLedger,
+  reimburseAdvance,
   trainerLedger,
   transferPayments,
   undoTransfer,
+  unreimburseAdvance,
   untransferredPayments,
 } from '../services/bank.js';
 import { rolloverSeason } from '../services/rollover.js';
@@ -1004,9 +1013,19 @@ api.delete(
     const [row] = await db.select().from(bankTransactions).where(eq(bankTransactions.id, id));
     if (!row) throw new Error('bank transaction not found');
     // A transfer line owns the transferred flags on the payments it covered, so
-    // deleting it has to put those back rather than orphaning them.
+    // deleting it has to put those back rather than orphaning them. An advance
+    // reimbursement owns `reimbursedOn` the same way — deleting the bank line
+    // underneath it without clearing that flag would leave the advance marked
+    // paid back while no money had actually moved.
     if (row.kind === 'player_transfer') {
       await undoTransfer(id);
+    } else if (row.kind === 'advance_reimbursement') {
+      const [advance] = await db
+        .select()
+        .from(treasurerAdvances)
+        .where(eq(treasurerAdvances.bankTransactionId, id));
+      if (advance) await unreimburseAdvance(advance.id);
+      else await db.delete(bankTransactions).where(eq(bankTransactions.id, id));
     } else {
       await db.delete(bankTransactions).where(eq(bankTransactions.id, id));
     }
@@ -1070,6 +1089,94 @@ api.delete(
   handle(async (req, res) => {
     const id = idParam.parse(req.params.id);
     await deleteTrainerPayment(id);
+    res.json({ ok: true });
+  }),
+);
+
+// --- ref-fee payables --------------------------------------------------------
+
+api.get(
+  '/seasons/:id/ref-ledger',
+  handle(async (req, res) => {
+    const seasonId = idParam.parse(req.params.id);
+    res.json(await refLedger(seasonId));
+  }),
+);
+
+api.post(
+  '/seasons/:id/ref-payments',
+  handle(async (req, res) => {
+    const seasonId = idParam.parse(req.params.id);
+    const body = z
+      .object({
+        ruleId: idParam,
+        paidOn: z.string(),
+        amountCents: money,
+        method: z.enum(['venmo', 'cash', 'zelle', 'check', 'other']).default('venmo'),
+        note: z.string().nullish(),
+      })
+      .parse(req.body);
+    res.json(await payRef({ seasonId, ...body }));
+  }),
+);
+
+api.delete(
+  '/ref-payments/:id',
+  handle(async (req, res) => {
+    const id = idParam.parse(req.params.id);
+    await deleteRefPayment(id);
+    res.json({ ok: true });
+  }),
+);
+
+// --- money owed to the treasurer ---------------------------------------------
+
+api.get(
+  '/seasons/:id/advances',
+  handle(async (req, res) => {
+    const seasonId = idParam.parse(req.params.id);
+    res.json(await listAdvances(seasonId));
+  }),
+);
+
+api.post(
+  '/seasons/:id/advances',
+  handle(async (req, res) => {
+    const seasonId = idParam.parse(req.params.id);
+    const body = z
+      .object({
+        label: z.string().min(1),
+        amountCents: money,
+        paidOn: z.string(),
+        note: z.string().nullish(),
+      })
+      .parse(req.body);
+    res.json(await recordAdvance({ seasonId, ...body }));
+  }),
+);
+
+api.post(
+  '/advances/:id/reimburse',
+  handle(async (req, res) => {
+    const id = idParam.parse(req.params.id);
+    const body = z.object({ paidOn: z.string() }).parse(req.body);
+    res.json(await reimburseAdvance(id, body.paidOn));
+  }),
+);
+
+api.post(
+  '/advances/:id/unreimburse',
+  handle(async (req, res) => {
+    const id = idParam.parse(req.params.id);
+    res.json(await unreimburseAdvance(id));
+  }),
+);
+
+api.delete(
+  '/advances/:id',
+  handle(async (req, res) => {
+    const id = idParam.parse(req.params.id);
+    await deleteAdvance(id);
     res.json({ ok: true });
   }),
 );
