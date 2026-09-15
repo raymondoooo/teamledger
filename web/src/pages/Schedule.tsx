@@ -18,6 +18,11 @@ export default function Schedule({ ctx }: { ctx: SeasonContext }) {
   const [syncing, setSyncing] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // A season runs for months, so by the time it is half over the list is mostly
+  // games nobody needs to look at again. Showing only what's left to happen
+  // keeps the table on the events you're actually managing; the toggle is for
+  // the rare trip back to check something old.
+  const [showAll, setShowAll] = useState(false);
 
   const load = useCallback(() => {
     Promise.all([
@@ -74,6 +79,13 @@ export default function Schedule({ ctx }: { ctx: SeasonContext }) {
     tournament: events.filter((e) => e.type === 'tournament' && !e.cancelled).length,
   };
   const scheduledCost = events.reduce((s, e) => s + (e.cancelled ? 0 : e.costCents), 0);
+
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const pastCount = events.filter((e) => new Date(e.startsAt) < startOfToday).length;
+  const visibleEvents = showAll
+    ? events
+    : events.filter((e) => new Date(e.startsAt) >= startOfToday);
 
   return (
     <>
@@ -140,6 +152,14 @@ export default function Schedule({ ctx }: { ctx: SeasonContext }) {
       )}
 
       <div className="panel table-wrap">
+        <div className="form-row" style={{ marginBottom: 12 }}>
+          <button onClick={() => setShowAll((a) => !a)}>
+            {showAll ? 'Hide past events' : `Show all${pastCount ? ` (${pastCount} past)` : ''}`}
+          </button>
+          {!showAll && pastCount > 0 && (
+            <span className="notice">{pastCount} past event{pastCount === 1 ? '' : 's'} hidden.</span>
+          )}
+        </div>
         <table>
           <thead>
             <tr>
@@ -152,10 +172,16 @@ export default function Schedule({ ctx }: { ctx: SeasonContext }) {
             </tr>
           </thead>
           <tbody>
-            {events.length === 0 && (
-              <tr><td colSpan={6} className="muted">Nothing on the schedule yet.</td></tr>
+            {visibleEvents.length === 0 && (
+              <tr>
+                <td colSpan={6} className="muted">
+                  {events.length === 0
+                    ? 'Nothing on the schedule yet.'
+                    : 'No upcoming events — everything on the schedule is in the past.'}
+                </td>
+              </tr>
             )}
-            {events.map((e) => (
+            {visibleEvents.map((e) => (
               <tr key={e.id}>
                 <td className="muted">
                   {new Date(e.startsAt).toLocaleDateString(undefined, {
