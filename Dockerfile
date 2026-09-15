@@ -16,7 +16,7 @@
 # PR that runs that suite, because a Node bump has to be proven against the
 # RUNNING container, not just a successful build.
 
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /src
 
 # --ignore-scripts is what keeps this fast. better-sqlite3's install script runs
@@ -39,14 +39,14 @@ RUN npm run build
 # Production dependency tree, resolved from the same lockfile as the build
 # stage but without devDependencies. This is the node_modules that ships, so
 # this is where better-sqlite3's bundled prebuild has to land.
-FROM node:22-alpine AS deps
+FROM node:26-alpine AS deps
 WORKDIR /src
 COPY package.json package-lock.json ./
 COPY server/package.json server/
 COPY web/package.json web/
 RUN npm ci --omit=dev --ignore-scripts
 
-FROM node:22-alpine
+FROM node:26-alpine
 WORKDIR /app
 
 # Links the image back to its source, so anyone who pulls it can find the repo
