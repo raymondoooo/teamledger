@@ -106,6 +106,16 @@ were allowed to diverge once and the screen said `$4350.00` while the PDF said
   alone. Both are money the team has received, so the books still balance:
   `sum(dues) + sum(player fundraising) == netDue`.
 
+## The bank tab is the statement
+
+`bank_transactions` holds what the bank statement shows and nothing else.
+Paying a trainer or a ref (`payTrainer`, `payRef`) records the payment against
+the payee and **writes no bank line**. They used to, and every week it
+double-counted: the treasurer withdraws one lump of cash, later fills
+several envelopes on Friday, and pays from personal Venmo just as often, so the
+app cannot know which withdrawal (if any) a payout came from. The withdrawal is
+entered once, as the statement shows it. Do not put the automatic line back.
+
 ## Derived vs manual expenses
 
 Rows in `expenses` with `source = 'derived'` are owned by the cost-rule engine and

@@ -260,7 +260,18 @@ export type TrainerLedgerRow = {
   forecastCents: number;
   paidCents: number;
   owedCents: number;
+  paidThrough: string | null;
+  creditCents: number;
+  payDay: PayDayQuote | null;
   payments: { id: number; paidOn: string; amountCents: number; method: string; note: string | null }[];
+};
+
+export type PayDayQuote = {
+  payDay: string;
+  sessions: { eventId: number; date: string; title: string; amountCents: number }[];
+  sessionsCents: number;
+  creditCents: number;
+  owedCents: number;
 };
 
 export type RefLedgerRow = {
@@ -274,6 +285,9 @@ export type RefLedgerRow = {
   forecastCents: number;
   paidCents: number;
   owedCents: number;
+  paidThrough: string | null;
+  creditCents: number;
+  payDay: PayDayQuote | null;
   payments: { id: number; paidOn: string; amountCents: number; method: string; note: string | null }[];
 };
 
@@ -314,6 +328,26 @@ export const fmt = (cents: number) => {
   const fraction = String(abs % 100).padStart(2, '0');
   return `${sign}$${whole}.${fraction}`;
 };
+
+// Plain 'YYYY-MM-DD' calendar dates, read and written in local time. Going
+// through toISOString() would give tomorrow's date to anyone using the app
+// after 8pm Eastern.
+const ymd = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const parseYmd = (s: string) => {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
+export const todayYmd = () => ymd(new Date());
+// The coming Sunday, or today if it is Sunday — the end of the week a Friday
+// envelope has to cover.
+export const thisSundayYmd = () => {
+  const d = new Date();
+  d.setDate(d.getDate() + ((7 - d.getDay()) % 7));
+  return ymd(d);
+};
+export const fmtDay = (s: string) =>
+  parseYmd(s).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
 export const parseMoney = (input: string): number | null => {
   const trimmed = input.trim();

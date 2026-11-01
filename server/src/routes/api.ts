@@ -1063,7 +1063,12 @@ api.get(
   '/seasons/:id/trainer-ledger',
   handle(async (req, res) => {
     const seasonId = idParam.parse(req.params.id);
-    res.json(await trainerLedger(seasonId));
+    const payDay = z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .parse(req.query.payDay);
+    res.json(await trainerLedger(seasonId, new Date(), payDay));
   }),
 );
 
@@ -1076,7 +1081,7 @@ api.post(
         trainerId: idParam,
         paidOn: z.string(),
         amountCents: money,
-        method: z.enum(['venmo', 'cash', 'zelle', 'check', 'other']).default('venmo'),
+        method: z.enum(['venmo', 'cash', 'zelle', 'check', 'other']).default('cash'),
         note: z.string().nullish(),
       })
       .parse(req.body);
@@ -1099,7 +1104,12 @@ api.get(
   '/seasons/:id/ref-ledger',
   handle(async (req, res) => {
     const seasonId = idParam.parse(req.params.id);
-    res.json(await refLedger(seasonId));
+    const payDay = z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .parse(req.query.payDay);
+    res.json(await refLedger(seasonId, new Date(), payDay));
   }),
 );
 
@@ -1112,7 +1122,7 @@ api.post(
         ruleId: idParam,
         paidOn: z.string(),
         amountCents: money,
-        method: z.enum(['venmo', 'cash', 'zelle', 'check', 'other']).default('venmo'),
+        method: z.enum(['venmo', 'cash', 'zelle', 'check', 'other']).default('cash'),
         note: z.string().nullish(),
       })
       .parse(req.body);

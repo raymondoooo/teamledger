@@ -548,7 +548,7 @@ export const bankTransactions = sqliteTable('bank_transactions', {
 });
 
 // Money paid out to a trainer. What they have earned comes from the schedule;
-// this is what has actually left the account, so the difference is what the
+// this is what they have actually been handed, so the difference is what the
 // team still owes them.
 export const trainerPayments = sqliteTable('trainer_payments', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -562,7 +562,9 @@ export const trainerPayments = sqliteTable('trainer_payments', {
   amountCents: integer('amount_cents').notNull(),
   method: text('method', { enum: PAYMENT_METHOD }).notNull().default('venmo'),
   note: text('note'),
-  // The bank line this created, so deleting the payment can remove it too.
+  // Legacy: the bank line a payment used to create automatically, so deleting
+  // it can remove that line too. New payments write no bank line — see
+  // payTrainer in services/bank.ts.
   bankTransactionId: integer('bank_transaction_id').references(() => bankTransactions.id, {
     onDelete: 'set null',
   }),

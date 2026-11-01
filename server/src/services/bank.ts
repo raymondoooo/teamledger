@@ -16,6 +16,7 @@ import {
   trainers,
   treasurerAdvances,
 } from '../db/schema.js';
+import { quotePayDay, paidThrough, type DatedSession, type PayDayQuote } from './paythrough.js';
 import { expectedCountsFor } from './segments.js';
 import { expectedSessionsFor } from './trainers.js';
 
@@ -30,6 +31,11 @@ function calendarDay(d: Date): number {
 function hasArrived(startsAt: Date, asOf: Date): boolean {
   return calendarDay(startsAt) <= calendarDay(asOf);
 }
+// The same local calendar day as a plain 'YYYY-MM-DD'.
+function localDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
 
 // The team's real bank account, and the two things that make it disagree with
 // the payment ledger if you do not track them:
@@ -38,7 +44,9 @@ function hasArrived(startsAt: Date, asOf: Date): boolean {
 //      is transferred, the team's books say the money is in but the bank says
 //      otherwise. `payments.transferredOn` closes that gap.
 //   2. A trainer earns money from the schedule long before they are paid. The
-//      difference is a payable the team still owes.
+//      difference is a payable the team still owes. Paying it is recorded
+//      against the trainer, not on the ledger — the withdrawal is entered as it
+//      appears on the statement, so the ledger always matches the bank.
 
 export type LedgerLine = {
   id: number | null;
@@ -208,6 +216,13 @@ export type TrainerLedgerRow = {
   paidCents: number;
   // Positive = the team still owes them for work already done.
   owedCents: number;
+  // Last day whose sessions the payments fully cover, and anything paid beyond
+  // it. Null/0 for a flat-fee trainer, who is not paid session by session.
+  paidThrough: string | null;
+  creditCents: number;
+  // What to pay to settle up through a chosen day. Only present when the
+  // ledger was asked about a pay day, and never for a flat-fee trainer.
+  payDay: PayDayQuote | null;
   payments: { id: number; paidOn: string; amountCents: number; method: string; note: string | null }[];
 };
 
@@ -224,9 +239,13 @@ export type TrainerLedgerRow = {
 //
 // Conflating them would either show you owing money for work not yet done, or
 // have the team collect less than it will eventually pay out.
+//
+// `payDay` additionally quotes what settles each trainer up through that day —
+// the Friday envelope that has to cover Sunday's game too.
 export async function trainerLedger(
   seasonId: number,
   asOf: Date = new Date(),
+  payDay?: string,
 ): Promise<TrainerLedgerRow[]> {
   const [season] = await db.select().from(seasons).where(eq(seasons.id, seasonId));
   if (!season) throw new Error(`season ${seasonId} not found`);
@@ -281,6 +300,25 @@ export async function trainerLedger(
       .sort((a, b) => a.paidOn.localeCompare(b.paidOn));
     const paidCents = myPayments.reduce((s, p) => s + p.amountCents, 0);
 
+    // Every live session, past and future, so a pay day can reach ahead of
+    // today. A cancelled one drops out, which is what moves paidThrough back
+    // and turns its money into credit.
+    const dated: DatedSession[] = [];
+    if (t.rateUnit !== 'flat') {
+      for (const c of mine) {
+        const event = eventById.get(c.eventId);
+        if (!event || event.cancelled) continue;
+        dated.push({
+          eventId: event.id,
+          date: localDate(event.startsAt),
+          title: event.title,
+          amountCents: c.amountCents,
+        });
+      }
+    }
+    const through =
+      t.rateUnit === 'flat' ? { paidThrough: null, creditCents: 0 } : paidThrough(dated, paidCents);
+
     return {
       trainerId: t.id,
       name: t.name,
@@ -292,6 +330,9 @@ export async function trainerLedger(
       forecastCents,
       paidCents,
       owedCents: earnedToDateCents - paidCents,
+      paidThrough: through.paidThrough,
+      creditCents: through.creditCents,
+      payDay: payDay && t.rateUnit !== 'flat' ? quotePayDay(dated, paidCents, payDay) : null,
       payments: myPayments.map((p) => ({
         id: p.id,
         paidOn: p.paidOn,
@@ -314,6 +355,10 @@ export type RefLedgerRow = {
   forecastCents: number;
   paidCents: number;
   owedCents: number;
+  // As for trainers: null/0/null for a flat-fee rule.
+  paidThrough: string | null;
+  creditCents: number;
+  payDay: PayDayQuote | null;
   payments: { id: number; paidOn: string; amountCents: number; method: string; note: string | null }[];
 };
 
@@ -321,7 +366,11 @@ export type RefLedgerRow = {
 // the league assigns whoever shows up — so the payee here is the cost_rule
 // itself ("Referee — $75/game") rather than a person, and each of its events'
 // charges stands in for a session.
-export async function refLedger(seasonId: number, asOf: Date = new Date()): Promise<RefLedgerRow[]> {
+export async function refLedger(
+  seasonId: number,
+  asOf: Date = new Date(),
+  payDay?: string,
+): Promise<RefLedgerRow[]> {
   const rules = await db
     .select()
     .from(costRules)
@@ -367,6 +416,22 @@ export async function refLedger(seasonId: number, asOf: Date = new Date()): Prom
       .sort((a, b) => a.paidOn.localeCompare(b.paidOn));
     const paidCents = myPayments.reduce((s, p) => s + p.amountCents, 0);
 
+    const dated: DatedSession[] = [];
+    if (rule.unit !== 'flat') {
+      for (const c of mine) {
+        const event = eventById.get(c.eventId);
+        if (!event || event.cancelled) continue;
+        dated.push({
+          eventId: event.id,
+          date: localDate(event.startsAt),
+          title: event.title,
+          amountCents: c.amountCents,
+        });
+      }
+    }
+    const through =
+      rule.unit === 'flat' ? { paidThrough: null, creditCents: 0 } : paidThrough(dated, paidCents);
+
     return {
       ruleId: rule.id,
       label: rule.label,
@@ -378,6 +443,9 @@ export async function refLedger(seasonId: number, asOf: Date = new Date()): Prom
       forecastCents,
       paidCents,
       owedCents: earnedToDateCents - paidCents,
+      paidThrough: through.paidThrough,
+      creditCents: through.creditCents,
+      payDay: payDay && rule.unit !== 'flat' ? quotePayDay(dated, paidCents, payDay) : null,
       payments: myPayments.map((p) => ({
         id: p.id,
         paidOn: p.paidOn,
@@ -389,7 +457,7 @@ export async function refLedger(seasonId: number, asOf: Date = new Date()): Prom
   });
 }
 
-// Records a payment to a ref-fee rule and the matching withdrawal.
+// Records a payment to a ref-fee rule. Writes no bank line — see payTrainer.
 export async function payRef(input: {
   seasonId: number;
   ruleId: number;
@@ -398,25 +466,8 @@ export async function payRef(input: {
   method: 'venmo' | 'cash' | 'zelle' | 'check' | 'other';
   note?: string | null;
 }) {
-  const [season] = await db.select().from(seasons).where(eq(seasons.id, input.seasonId));
-  if (!season) throw new Error('season not found');
   const [rule] = await db.select().from(costRules).where(eq(costRules.id, input.ruleId));
   if (!rule) throw new Error('cost rule not found');
-
-  const account = await getOrCreateAccount(season.teamId);
-
-  const [txn] = await db
-    .insert(bankTransactions)
-    .values({
-      accountId: account.id,
-      seasonId: input.seasonId,
-      occurredOn: input.paidOn,
-      description: `${rule.label} — ref fee`,
-      amountCents: -Math.abs(input.amountCents),
-      kind: 'ref_payment',
-      note: input.note ?? null,
-    })
-    .returning();
 
   const [row] = await db
     .insert(refPayments)
@@ -427,7 +478,6 @@ export async function payRef(input: {
       amountCents: Math.abs(input.amountCents),
       method: input.method,
       note: input.note ?? null,
-      bankTransactionId: txn.id,
     })
     .returning();
 
@@ -526,8 +576,12 @@ export async function deleteAdvance(id: number) {
   }
 }
 
-// Records a payment to a trainer and the matching withdrawal, so paying someone
-// never needs two separate entries.
+// Records a payment to a trainer. Deliberately writes no bank line: the bank
+// tab is what the statement says and nothing else. A trainer is paid out of an
+// envelope of cash withdrawn days earlier, out of the treasurer's own Venmo, or
+// out of a parent's payment before it was ever deposited — the app cannot tell
+// which, and guessing put a second withdrawal on the ledger every time. The
+// money leaving the account is entered on the bank tab when it shows up there.
 export async function payTrainer(input: {
   seasonId: number;
   trainerId: number;
@@ -536,26 +590,8 @@ export async function payTrainer(input: {
   method: 'venmo' | 'cash' | 'zelle' | 'check' | 'other';
   note?: string | null;
 }) {
-  const [season] = await db.select().from(seasons).where(eq(seasons.id, input.seasonId));
-  if (!season) throw new Error('season not found');
   const [trainer] = await db.select().from(trainers).where(eq(trainers.id, input.trainerId));
   if (!trainer) throw new Error('trainer not found');
-
-  const account = await getOrCreateAccount(season.teamId);
-
-  const [txn] = await db
-    .insert(bankTransactions)
-    .values({
-      accountId: account.id,
-      seasonId: input.seasonId,
-      occurredOn: input.paidOn,
-      description: `${trainer.name} — training`,
-      // Money leaving the account.
-      amountCents: -Math.abs(input.amountCents),
-      kind: 'trainer_payment',
-      note: input.note ?? null,
-    })
-    .returning();
 
   const [row] = await db
     .insert(trainerPayments)
@@ -566,15 +602,15 @@ export async function payTrainer(input: {
       amountCents: Math.abs(input.amountCents),
       method: input.method,
       note: input.note ?? null,
-      bankTransactionId: txn.id,
     })
     .returning();
 
   return row;
 }
 
-// Removing a trainer payment takes its bank line with it, or the ledger would
-// keep a withdrawal for money that is no longer recorded as paid.
+// Payments recorded before payouts stopped writing bank lines still carry one;
+// removing such a payment takes its line with it, or the ledger would keep a
+// withdrawal for money that is no longer recorded as paid.
 export async function deleteTrainerPayment(id: number) {
   const [row] = await db.select().from(trainerPayments).where(eq(trainerPayments.id, id));
   if (!row) throw new Error('trainer payment not found');

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { api, fmt, parseMoney } from './api.js';
+import { api, fmt, fmtDay, parseMoney, todayYmd, type PayDayQuote } from './api.js';
 
 // Shared page furniture. Every screen in this app is the same shape — a few
 // sections, each a table plus a form to add a row — and having that shape in
@@ -126,7 +126,7 @@ export function PayableRow({
   onChanged,
   compact,
 }: {
-  label: string;
+  label: ReactNode;
   completedSessions: number;
   billedSessions: number;
   earnedToDateCents: number;
@@ -145,7 +145,8 @@ export function PayableRow({
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState('');
   const [paidOn, setPaidOn] = useState(new Date().toISOString().slice(0, 10));
-  const [method, setMethod] = useState('venmo');
+  // Trainers and refs are paid in cash out of an envelope.
+  const [method, setMethod] = useState('cash');
   const [error, setError] = useState<string | null>(null);
 
   const cols = compact ? 3 : 7;
@@ -197,7 +198,7 @@ export function PayableRow({
                 <button
                   className="link danger"
                   onClick={() =>
-                    confirm('Delete this payment and its bank line?') &&
+                    confirm('Delete this payment?') &&
                     api.del(`${deletePrefix}/${p.id}`).then(onChanged)
                   }
                 >
@@ -228,7 +229,7 @@ export function PayableRow({
               <div className="field">
                 <label>Method</label>
                 <select value={method} onChange={(e) => setMethod(e.target.value)}>
-                  {['venmo', 'cash', 'zelle', 'check', 'other'].map((m) => (
+                  {['cash', 'venmo', 'zelle', 'check', 'other'].map((m) => (
                     <option key={m} value={m}>{m}</option>
                   ))}
                 </select>
@@ -245,5 +246,199 @@ export function PayableRow({
         </tr>
       )}
     </>
+  );
+}
+
+// Settling a trainer or a ref-fee rule up through a chosen day. The envelope
+// gets filled on a Friday for a weekend that has not happened yet, so "owed
+// now" is the wrong question — this lists every session since the money last
+// ran out, up to the pay day, and records the payment in one click. The
+// paid-through date and the quote both come from the server; nothing is added
+// up here.
+//
+// Recording a payment never touches the bank tab. The cash usually left the
+// account days earlier as one withdrawal covering several people, and that
+// withdrawal is entered there as the statement shows it.
+export function PayDayCard({
+  name,
+  paidThrough,
+  quote,
+  payments,
+  payUrl,
+  deletePrefix,
+  extraFields,
+  onChanged,
+}: {
+  name: string;
+  paidThrough: string | null;
+  quote: PayDayQuote | null;
+  payments: PayableLine[];
+  payUrl: string;
+  deletePrefix: string;
+  // Merged into the POST body — { trainerId } or { ruleId }.
+  extraFields: Record<string, unknown>;
+  onChanged: () => void;
+}) {
+  const [paidOn, setPaidOn] = useState(todayYmd());
+  const [method, setMethod] = useState('cash');
+  const [amount, setAmount] = useState('');
+  const [formOpen, setFormOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const q = quote;
+  if (!q) return null;
+
+  const since = paidThrough ? `since ${fmtDay(paidThrough)}` : 'this season';
+  const owed = q.owedCents > 0;
+  const showForm = owed || formOpen;
+
+  const record = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Blank means "what the card says is owed" — the common case is one tap.
+    const cents = amount.trim() ? parseMoney(amount) : owed ? q.owedCents : null;
+    if (cents === null || cents <= 0) return setError('Enter an amount');
+    setBusy(true);
+    setError(null);
+    api
+      .post(payUrl, {
+        ...extraFields,
+        paidOn,
+        amountCents: cents,
+        method,
+        note: cents === q.owedCents ? `Through ${fmtDay(q.payDay)}` : null,
+      })
+      .then(() => {
+        setAmount('');
+        setFormOpen(false);
+        onChanged();
+      })
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="panel pay-card">
+      <div className="pay-card-head">
+        <strong>{name}</strong>
+        {paidThrough ? (
+          <span className="settled">Paid through {fmtDay(paidThrough)}</span>
+        ) : (
+          <span className="muted">Nothing paid yet</span>
+        )}
+      </div>
+
+      {q.sessions.length > 0 && (
+        <details open={q.sessions.length <= 10}>
+          <summary className="muted">
+            {q.sessions.length} session{q.sessions.length === 1 ? '' : 's'} {since}
+          </summary>
+          <table>
+            <tbody>
+              {q.sessions.map((x) => (
+                <tr key={x.eventId}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDay(x.date)}</td>
+                  <td className="muted">{x.title}</td>
+                  <td className="num">{fmt(x.amountCents)}</td>
+                </tr>
+              ))}
+              {q.creditCents > 0 && (
+                <tr>
+                  <td />
+                  <td className="muted">Already paid toward these</td>
+                  <td className="num">-{fmt(q.creditCents)}</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </details>
+      )}
+
+      {owed ? (
+        <div className="pay-card-total">
+          <span>Owed through {fmtDay(q.payDay)}</span>
+          <span className="owes">{fmt(q.owedCents)}</span>
+        </div>
+      ) : (
+        <p className="settled" style={{ margin: '8px 0 0' }}>
+          Nothing to pay through {fmtDay(q.payDay)}
+          {q.owedCents < 0 && <span className="muted"> — {fmt(-q.owedCents)} paid ahead</span>}
+          {!formOpen && (
+            <>
+              {' '}
+              <button className="link" onClick={() => setFormOpen(true)}>
+                Record a payment anyway
+              </button>
+            </>
+          )}
+        </p>
+      )}
+
+      {showForm && (
+        <form className="form-row" onSubmit={record} style={{ marginTop: 8 }}>
+          <div className="field">
+            <label>Paid on</label>
+            <input type="date" value={paidOn} onChange={(e) => setPaidOn(e.target.value)} />
+          </div>
+          <div className="field" style={{ width: 110 }}>
+            <label>Amount</label>
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder={owed ? (q.owedCents / 100).toFixed(2) : '0.00'}
+              inputMode="decimal"
+            />
+          </div>
+          <div className="field">
+            <label>Method</label>
+            <select value={method} onChange={(e) => setMethod(e.target.value)}>
+              {['cash', 'venmo', 'zelle', 'check', 'other'].map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+          <button className="primary" type="submit" disabled={busy}>
+            Record {amount.trim() ? 'payment' : owed ? `${fmt(q.owedCents)} paid` : 'payment'}
+          </button>
+          {formOpen && !owed && (
+            <button type="button" onClick={() => setFormOpen(false)}>Cancel</button>
+          )}
+          {error && <span className="owes" style={{ fontSize: 13 }}>{error}</span>}
+        </form>
+      )}
+
+      {payments.length > 0 && (
+        <details className="pay-card-history">
+          <summary className="muted">
+            {payments.length} payment{payments.length === 1 ? '' : 's'} so far,{' '}
+            {fmt(payments.reduce((s, p) => s + p.amountCents, 0))}
+          </summary>
+          <table>
+            <tbody>
+              {[...payments].reverse().map((p) => (
+                <tr key={p.id}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{fmtDay(p.paidOn)}</td>
+                  <td className="muted">
+                    {p.method}
+                    {p.note ? ` — ${p.note}` : ''}
+                  </td>
+                  <td className="num">{fmt(p.amountCents)}</td>
+                  <td className="num">
+                    <button
+                      className="link danger"
+                      onClick={() =>
+                        confirm(`Remove the ${fmt(p.amountCents)} payment on ${fmtDay(p.paidOn)}?`) &&
+                        api.del(`${deletePrefix}/${p.id}`).then(onChanged)
+                      }
+                    >
+                      remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+    </div>
   );
 }
