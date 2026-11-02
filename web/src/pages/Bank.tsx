@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { SeasonContext } from '../App.js';
 import {
   api,
@@ -10,11 +11,13 @@ import {
   type TreasurerAdvance,
   type UntransferredPayment,
 } from '../api.js';
-import { AddSection, Collapsible, PayableRow } from '../ui.js';
+import { AddSection, Collapsible } from '../ui.js';
 
-// The ledger book, replacing the paper one. Three questions it answers:
-// what is in the account, what is still sitting in the treasurer's own Venmo,
-// and what the team still owes its trainers.
+// The ledger book, replacing the paper one. It holds what the bank statement
+// holds and nothing else — paying a trainer or a ref is recorded on the
+// Dashboard, and the cash leaving the account is entered here as the statement
+// shows it. Trainer and ref totals still feed the stats so "after clearing all
+// of it" stays honest.
 export default function Bank({ ctx }: { ctx: SeasonContext }) {
   const [ledger, setLedger] = useState<BankLedger | null>(null);
   const [held, setHeld] = useState<UntransferredPayment[]>([]);
@@ -71,7 +74,9 @@ export default function Bank({ ctx }: { ctx: SeasonContext }) {
           </div>
         </div>
         <div className="stat">
-          <div className="label">Owed to trainers &amp; refs now</div>
+          <div className="label">
+            <Link to="/">Owed to trainers &amp; refs now</Link>
+          </div>
           <div
             className="value"
             style={{ color: owedToTrainers + owedToRefs > 0 ? 'var(--danger)' : undefined }}
@@ -220,112 +225,6 @@ export default function Bank({ ctx }: { ctx: SeasonContext }) {
           </tbody>
         </table>
       </AddSection>
-
-      <Collapsible
-        title="Trainers"
-        open={owedToTrainers > 0}
-        hint={
-          owedToTrainers > 0 ? (
-            <span className="owes">— {fmt(owedToTrainers)} owed</span>
-          ) : (
-            <span className="muted">— all settled</span>
-          )
-        }
-      >
-      <div className="panel table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Trainer</th>
-              <th className="num hide-sm">Done</th>
-              <th className="num hide-sm">Earned so far</th>
-              <th className="num hide-sm">Paid</th>
-              <th className="num">Owed now</th>
-              <th className="num hide-sm">Season forecast</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {trainerRows.length === 0 && (
-              <tr><td colSpan={7} className="muted">No trainers on this team.</td></tr>
-            )}
-            {trainerRows.map((t) => (
-              <PayableRow
-                key={t.trainerId}
-                label={t.name}
-                completedSessions={t.completedSessions}
-                billedSessions={t.billedSessions}
-                earnedToDateCents={t.earnedToDateCents}
-                paidCents={t.paidCents}
-                owedCents={t.owedCents}
-                forecastCents={t.forecastCents}
-                payments={t.payments}
-                payUrl={`/seasons/${ctx.season.id}/trainer-payments`}
-                deletePrefix="/trainer-payments"
-                extraFields={{ trainerId: t.trainerId }}
-                onChanged={load}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
-      </Collapsible>
-
-      <Collapsible
-        title="Referees"
-        open={owedToRefs > 0}
-        hint={
-          owedToRefs > 0 ? (
-            <span className="owes">— {fmt(owedToRefs)} owed</span>
-          ) : (
-            <span className="muted">— all settled</span>
-          )
-        }
-      >
-      <div className="panel table-wrap">
-        <p className="notice" style={{ marginTop: 0 }}>
-          There is no single "ref" to name — the league sends whoever it sends — so each ref-fee
-          rule from Settings is its own payee here. Paying cash at the game? Log it as{' '}
-          <a href="#money-owed-to-you">money owed to you</a> instead, so it also tracks that you
-          need it back.
-        </p>
-        <table>
-          <thead>
-            <tr>
-              <th>Ref-fee rule</th>
-              <th className="num hide-sm">Done</th>
-              <th className="num hide-sm">Earned so far</th>
-              <th className="num hide-sm">Paid</th>
-              <th className="num">Owed now</th>
-              <th className="num hide-sm">Season forecast</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {refRows.length === 0 && (
-              <tr><td colSpan={7} className="muted">No ref-fee rules on this season.</td></tr>
-            )}
-            {refRows.map((r) => (
-              <PayableRow
-                key={r.ruleId}
-                label={r.label}
-                completedSessions={r.completedSessions}
-                billedSessions={r.billedSessions}
-                earnedToDateCents={r.earnedToDateCents}
-                paidCents={r.paidCents}
-                owedCents={r.owedCents}
-                forecastCents={r.forecastCents}
-                payments={r.payments}
-                payUrl={`/seasons/${ctx.season.id}/ref-payments`}
-                deletePrefix="/ref-payments"
-                extraFields={{ ruleId: r.ruleId }}
-                onChanged={load}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
-      </Collapsible>
 
       <div id="money-owed-to-you">
         <Collapsible

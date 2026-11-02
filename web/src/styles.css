@@ -377,6 +377,27 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
   margin: 24px 0 10px;
 }
 
+/* A trainer's "settle up through this day" card on the Dashboard. */
+.pay-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+}
+.pay-card details > summary { cursor: pointer; font-size: 13px; padding: 2px 0 6px; }
+.pay-card-history { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.pay-card-total {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  padding: 10px 10px 12px;
+}
+.pay-day-picker { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pay-day-picker label { color: var(--muted); font-size: 13px; }
+
 /* Shown only once the columns it substitutes for have been hidden. */
 .show-sm-only { display: none; }
 
