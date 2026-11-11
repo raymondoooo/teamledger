@@ -8,6 +8,11 @@
 # schedule, not on ours: the image that was clean when it was tagged is the one
 # self-hosters keep running for months, and nothing in a build pipeline would
 # ever look at it again.
+#
+# Two images are scanned, because a red run means different things for each:
+# findings in the published image that main has already fixed mean "cut a
+# release"; findings in main too mean "something needs fixing". The summary
+# says which.
 
 name: Vulnerability scan
 
@@ -34,7 +39,7 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30   # includes building the image from main
     # The publish workflow also runs on every push to main, where it builds and
     # tests but publishes nothing. Scanning then would re-report an unchanged
     # image on every commit, which is the noise this workflow exists to avoid —
@@ -45,7 +50,16 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
        startsWith(github.event.workflow_run.head_branch, 'v'))
     steps:
+      # A workflow_run or schedule trigger checks out the default branch, so
+      # this is main whichever way the scan was started.
+      - uses: actions/checkout@v7
+
+      - name: Build image from main
+        run: docker build -t teamledger:main .
+
       - name: Scan the published image
+        id: published
+        continue-on-error: true
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: raymondoooo/teamledger:latest
@@ -56,3 +70,44 @@ jobs:
           # finding scrolls past with the rest. Fail only on what can be fixed.
           ignore-unfixed: true
           exit-code: '1'
+          output: published.txt
+
+      - name: Scan main
+        id: main
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: teamledger:main
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          output: main.txt
+          skip-setup-trivy: true
+
+      - name: Summary
+        env:
+          PUBLISHED: ${{ steps.published.outcome }}
+          MAIN: ${{ steps.main.outcome }}
+        run: |
+          if [ "$MAIN" != success ]; then
+            verdict="**Needs a fix.** main has findings, so a release alone won't clear them."
+          elif [ "$PUBLISHED" != success ]; then
+            verdict="**Needs a release.** The published image has findings that main has already fixed."
+          else
+            verdict="Clean. Neither image has fixable HIGH or CRITICAL findings."
+          fi
+          {
+            echo "## $verdict"
+            echo
+            echo "| Image | Fixable HIGH/CRITICAL |"
+            echo "|---|---|"
+            echo "| \`raymondoooo/teamledger:latest\` | $([ "$PUBLISHED" = success ] && echo none || echo found) |"
+            echo "| main | $([ "$MAIN" = success ] && echo none || echo found) |"
+            for f in published main; do
+              if [ -s "$f.txt" ]; then
+                echo; echo "<details><summary>$f</summary>"; echo; echo '```'; cat "$f.txt"; echo '```'; echo "</details>"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$verdict"
+          [ "$PUBLISHED" = success ] && [ "$MAIN" = success ]
