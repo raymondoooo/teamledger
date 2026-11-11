@@ -2,6 +2,7 @@ import 'dotenv/config';
 import path from 'node:path';
 import cookieParser from 'cookie-parser';
 import express from 'express';
+import helmet from 'helmet';
 import { trustProxy } from './config.js';
 import { api } from './routes/api.js';
 import { startBackupScheduler } from './services/backup.js';
@@ -13,6 +14,39 @@ const app = express();
 // Trusting it unconditionally lets anyone forge the header and hand themselves
 // a fresh rate-limit bucket on every request. See config.ts.
 app.set('trust proxy', trustProxy ? 1 : false);
+app.disable('x-powered-by');
+
+// Security headers. The client is a Vite build of separate script files with
+// no third-party origins, so scripts need nothing beyond 'self'. Styles keep
+// 'unsafe-inline' because React's style props and the bundle's injected rules
+// are inline. upgrade-insecure-requests is left off on purpose: plenty of
+// self-hosters reach this over plain http on a LAN, and the directive would
+// break every asset load for them.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", 'data:', 'blob:'],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        frameAncestors: ["'none'"],
+        formAction: ["'self'"],
+      },
+    },
+    // Sent below, and only over HTTPS: an HSTS header on a plain-http LAN
+    // install is ignored at best and a trap if the host later moves.
+    strictTransportSecurity: false,
+  }),
+);
+app.use((req, res, next) => {
+  if (req.secure) res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  next();
+});
 
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
